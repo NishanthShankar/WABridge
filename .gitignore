@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Data & database
+data/
+*.db
+
+# Environment & secrets
+.env
+config.yaml
+
+# Drizzle migration snapshots (regeneratable, large)
+**/drizzle/meta/0*_snapshot.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude Code
+.claude/
+
+# Planning docs
+.planning/
+
+# Private multi-tenant plugin (separate repo)
+packages/multi-tenant/
+
+# Turbo
+.turbo/
+
+# Logs
+*.log

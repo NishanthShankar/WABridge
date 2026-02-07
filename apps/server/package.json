@@ -1,0 +1,53 @@
+{
+  "name": "@openwa/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./context": "./src/context.ts",
+    "./plugin": "./src/plugin.ts",
+    "./config/schema": "./src/config/schema.ts",
+    "./db/client": "./src/db/client.ts",
+    "./bridge/socket": "./src/bridge/socket.ts",
+    "./bridge/types": "./src/bridge/types.ts",
+    "./rate-limit/rate-limiter": "./src/rate-limit/rate-limiter.ts",
+    "./crypto/vault": "./src/crypto/vault.ts",
+    "./delivery/delivery.listener": "./src/delivery/delivery.listener.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/db/migrate.ts"
+  },
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@hono/node-server": "^1.13.0",
+    "@hono/node-ws": "^1.0.0",
+    "@hono/zod-validator": "^0.7.6",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "async-mutex": "^0.5.0",
+    "better-sqlite3": "^11.8.0",
+    "bullmq": "^5.67.3",
+    "drizzle-orm": "^0.38.0",
+    "hono": "^4.7.0",
+    "js-yaml": "^4.1.0",
+    "papaparse": "^5.5.3",
+    "pino": "^9.6.0",
+    "qrcode": "^1.5.4",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "zod": "^3.24.0"
+  },
+  "optionalDependencies": {
+    "@ngrok/ngrok": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/js-yaml": "^4.0.9",
+    "@types/papaparse": "^5.5.2",
+    "@types/qrcode": "^1.5.5",
+    "drizzle-kit": "^0.30.0",
+    "tsx": "^4.19.0"
+  }
+}

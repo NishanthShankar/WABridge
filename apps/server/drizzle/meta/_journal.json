@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1770612757771,
+      "tag": "0000_purple_shaman",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1770632079094,
+      "tag": "0001_modern_zeigeist",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1770738921594,
+      "tag": "0002_living_sentinel",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1770825600000,
+      "tag": "0003_remarkable_longshot",
+      "breakpoints": true
+    }
+  ]
+}

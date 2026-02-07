@@ -1,0 +1,25 @@
+services:
+  valkey:
+    image: valkey/valkey:8.1-alpine
+    ports:
+      - '6379:6379'
+    volumes:
+      - valkey-data:/data
+    command: valkey-server --appendonly yes --maxmemory-policy noeviction
+    restart: unless-stopped
+
+  openwa:
+    build: .
+    ports:
+      - '4000:4000'
+    volumes:
+      - ./data:/app/data
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - OPENWA_ENCRYPTION_KEY
+    depends_on:
+      - valkey
+    restart: unless-stopped
+
+volumes:
+  valkey-data:

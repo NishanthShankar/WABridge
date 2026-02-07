@@ -1,0 +1,10 @@
+node_modules
+dist
+data
+*.db
+.git
+.turbo
+.claude
+.planning
+.DS_Store
+*.log
