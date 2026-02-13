@@ -1,4 +1,4 @@
-# openWA
+# WABridge
 
 WhatsApp automation platform for Indian small businesses. Send scheduled messages, manage contacts, and automate recurring communications through a simple API and web dashboard.
 
@@ -28,8 +28,8 @@ Built with [Baileys](https://github.com/WhiskeySockets/Baileys) (no official Wha
 
 ```bash
 # Clone
-git clone https://github.com/NishanthShankar/openWA.git
-cd openWA
+git clone https://github.com/NishanthShankar/WABridge.git
+cd WABridge
 
 # Install dependencies
 pnpm install
@@ -41,7 +41,7 @@ docker run -d --name valkey -p 6379:6379 valkey/valkey:8.1-alpine
 pnpm dev
 ```
 
-On first boot, openWA will:
+On first boot, WABridge will:
 1. Generate a config file at `config.yaml` with an encryption key and API key
 2. Log your API key to the console - **save this**
 3. Start listening on `http://localhost:4000`
@@ -179,7 +179,7 @@ GET    /api/rate-limit/status     # Current usage and remaining quota
 docker compose up -d
 ```
 
-This starts Valkey and the openWA server. Mount your `config.yaml` and `data/` directory for persistence:
+This starts Valkey and the WABridge server. Mount your `config.yaml` and `data/` directory for persistence:
 
 ```yaml
 volumes:
