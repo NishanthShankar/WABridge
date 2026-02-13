@@ -45,6 +45,7 @@ export class ConnectionManager {
   private status: ConnectionStatus = 'pairing';
   private retryStartedAt: Date | null = null;
   private account: { phoneNumber: string; name: string } | null = null;
+  private lastQrDataUrl: string | null = null;
 
   /** Callbacks invoked every time the connection opens (including reconnections) */
   private connectedCallbacks: Array<(sock: ReturnType<typeof makeWASocket>) => void> = [];
@@ -94,6 +95,11 @@ export class ConnectionManager {
     };
   }
 
+  /** Returns the last QR data URL (for sending to newly connected WS clients). */
+  getLastQr(): string | null {
+    return this.lastQrDataUrl;
+  }
+
   /**
    * Initialize Baileys socket and start WhatsApp connection.
    * On first run (no stored creds), displays QR code for pairing.
@@ -141,6 +147,7 @@ export class ConnectionManager {
       try {
         // Generate QR for web page (data URL) and broadcast to WebSocket clients
         const qrDataUrl = await QRCode.toDataURL(qr);
+        this.lastQrDataUrl = qrDataUrl;
         this.broadcast({ type: 'qr', data: qrDataUrl });
 
         // Print QR to terminal for CLI-based pairing
@@ -159,6 +166,7 @@ export class ConnectionManager {
     // Connection opened
     if (connection === 'open') {
       this.status = 'connected';
+      this.lastQrDataUrl = null;
       this.connectedAt = new Date();
       this.reconnectAttempt = 0;
       this.retryStartedAt = null;

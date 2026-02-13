@@ -1,10 +1,12 @@
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { queryKeys } from '@/lib/query-keys';
 
 export function QRDisplay() {
-  const queryClient = useQueryClient();
-  const qrData = queryClient.getQueryData<string>(queryKeys.connection.qr);
+  const { data: qrData } = useQuery<string>({
+    queryKey: queryKeys.connection.qr,
+    enabled: false,
+  });
 
   if (!qrData) {
     return (
