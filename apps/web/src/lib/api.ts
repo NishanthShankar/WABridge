@@ -1,4 +1,5 @@
 import { API_BASE } from './constants';
+import { getApiKey, clearApiKey } from './auth';
 import type {
   ConnectionHealth,
   Contact,
@@ -38,14 +39,24 @@ class ApiError extends Error {
   }
 }
 
+function authHeaders(): Record<string, string> {
+  const key = getApiKey();
+  return key ? { 'X-API-Key': key } : {};
+}
+
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${url}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      ...authHeaders(),
       ...init?.headers,
     },
   });
+  if (res.status === 401) {
+    clearApiKey();
+    window.location.reload();
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new ApiError(err.error || res.statusText, res.status);
@@ -82,8 +93,13 @@ export const api = {
       return fetch(`${API_BASE}/contacts/import`, {
         method: 'POST',
         body: formData,
+        headers: authHeaders(),
         // Do NOT set Content-Type -- browser sets multipart boundary automatically
       }).then(async (res) => {
+        if (res.status === 401) {
+          clearApiKey();
+          window.location.reload();
+        }
         if (!res.ok) {
           const err = await res.json().catch(() => ({ error: res.statusText }));
           throw new ApiError(err.error || res.statusText, res.status);

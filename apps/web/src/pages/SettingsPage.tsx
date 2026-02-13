@@ -1,5 +1,6 @@
-import { Monitor, Moon, Sun } from 'lucide-react';
+import { LogOut, Monitor, Moon, Sun } from 'lucide-react';
 import { useTheme } from '@/components/theme-provider';
+import { clearApiKey } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
@@ -40,6 +41,26 @@ export function SettingsPage() {
               </Button>
             ))}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Session</CardTitle>
+          <CardDescription>Disconnect from the dashboard and return to the login screen.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button
+            variant="destructive"
+            onClick={() => {
+              clearApiKey();
+              window.location.reload();
+            }}
+            className="gap-2"
+          >
+            <LogOut className="h-4 w-4" />
+            Disconnect
+          </Button>
         </CardContent>
       </Card>
     </div>
