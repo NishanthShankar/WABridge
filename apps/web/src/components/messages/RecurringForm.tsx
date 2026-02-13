@@ -186,10 +186,10 @@ export function RecurringForm() {
     };
 
     if (editingRule) {
-      const { contactId: _cid, ...updateData } = base;
+      const { contactId: _cid, phone: _p, name: _n, ...updateData } = base as Record<string, unknown>;
       updateMutation.mutate({
         id: editingRule.id,
-        data: { ...updateData, enabled },
+        data: { ...updateData, enabled } as Parameters<typeof updateMutation.mutate>[0]['data'],
       });
     } else {
       createMutation.mutate(base);
