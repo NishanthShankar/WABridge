@@ -1,4 +1,4 @@
-import { eq, and, desc, sql, inArray } from 'drizzle-orm';
+import { eq, and, desc, sql, inArray, notInArray } from 'drizzle-orm';
 import type { Queue } from 'bullmq';
 import { scheduledMessages, contacts, recurringRules } from '../db/schema.js';
 import { scheduleOneTimeJob, cancelJob, rescheduleJob } from '../scheduler/jobs.js';
@@ -382,6 +382,8 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
     listMessages(filters: {
       status?: string;
       contactId?: string;
+      phone?: string;
+      phoneMode?: 'include' | 'exclude';
       limit: number;
       offset: number;
     }) {
@@ -392,6 +394,32 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
       }
       if (filters.contactId) {
         conditions.push(eq(scheduledMessages.contactId, filters.contactId));
+      }
+
+      // Phone number filter: look up contact IDs by normalized phone(s)
+      if (filters.phone) {
+        const phones = filters.phone.split(',').map((p) => normalizeIndianPhone(p.trim()));
+        const matchedContacts = db
+          .select({ id: contacts.id })
+          .from(contacts)
+          .where(inArray(contacts.phone, phones))
+          .all();
+        const matchedIds = matchedContacts.map((c) => c.id);
+
+        if (filters.phoneMode === 'exclude') {
+          if (matchedIds.length > 0) {
+            conditions.push(notInArray(scheduledMessages.contactId, matchedIds));
+          }
+          // If no contacts matched, exclude nothing — no condition needed
+        } else {
+          // include mode (default)
+          if (matchedIds.length > 0) {
+            conditions.push(inArray(scheduledMessages.contactId, matchedIds));
+          } else {
+            // No contacts matched — return empty result
+            conditions.push(sql`0 = 1`);
+          }
+        }
       }
 
       const where = conditions.length > 0 ? and(...conditions) : undefined;

@@ -39,6 +39,8 @@ export const editMessageSchema = z.object({
 export const listMessagesSchema = z.object({
   status: z.enum(['pending', 'sent', 'delivered', 'failed', 'cancelled']).optional(),
   contactId: z.string().uuid().optional(),
+  phone: z.string().optional(),
+  phoneMode: z.enum(['include', 'exclude']).default('include'),
   limit: z.coerce.number().min(1).max(200).default(50),
   offset: z.coerce.number().min(0).default(0),
 });

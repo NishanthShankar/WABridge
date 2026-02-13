@@ -176,6 +176,8 @@ export interface ScheduleMessageUpdate {
 export interface MessageListParams {
   status?: MessageStatus;
   contactId?: string;
+  phone?: string;
+  phoneMode?: 'include' | 'exclude';
   limit?: number;
   offset?: number;
 }

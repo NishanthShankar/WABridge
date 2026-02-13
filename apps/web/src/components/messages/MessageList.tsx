@@ -12,9 +12,19 @@ import {
   RotateCcw,
   MessageSquare,
   Clock,
+  Filter,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ResponsiveList, type Column } from '@/components/shared/ResponsiveList';
 import { EmptyState } from '@/components/shared/EmptyState';
@@ -46,8 +56,16 @@ export function MessageList({ onSchedule, onRecurring }: MessageListProps) {
   const [offset, setOffset] = useState(0);
   const limit = 50;
 
+  // Phone filter state
+  const [phoneInput, setPhoneInput] = useState('');
+  const [phoneMode, setPhoneMode] = useState<'include' | 'exclude'>('include');
+  const [activePhoneFilter, setActivePhoneFilter] = useState('');
+  const [activePhoneMode, setActivePhoneMode] = useState<'include' | 'exclude'>('include');
+
   const params = {
     status: statusFilter === 'all' ? undefined : (statusFilter as MessageStatus),
+    phone: activePhoneFilter || undefined,
+    phoneMode: activePhoneFilter ? activePhoneMode : undefined,
     limit,
     offset,
   };
@@ -150,11 +168,13 @@ export function MessageList({ onSchedule, onRecurring }: MessageListProps) {
       accessor: (m) => (
         <div>
           <span className="font-medium">
-            {m.contactName || 'Unknown'}
+            {m.contactName || m.contactPhone}
           </span>
-          <span className="ml-1 text-xs text-muted-foreground font-mono">
-            {m.contactPhone}
-          </span>
+          {m.contactName && (
+            <span className="ml-1 text-xs text-muted-foreground font-mono">
+              {m.contactPhone}
+            </span>
+          )}
         </div>
       ),
     },
@@ -216,6 +236,57 @@ export function MessageList({ onSchedule, onRecurring }: MessageListProps) {
       {/* Toolbar */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
         <RateLimitBadge />
+        {/* Phone filter */}
+        <div className="flex items-center gap-2">
+          <Filter className="size-4 text-muted-foreground" />
+          <Select value={phoneMode} onValueChange={(v) => setPhoneMode(v as 'include' | 'exclude')}>
+            <SelectTrigger size="sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="include">Includes</SelectItem>
+              <SelectItem value="exclude">Excludes</SelectItem>
+            </SelectContent>
+          </Select>
+          <Input
+            placeholder="Phone number"
+            value={phoneInput}
+            onChange={(e) => setPhoneInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && phoneInput.trim()) {
+                setActivePhoneFilter(phoneInput.trim());
+                setActivePhoneMode(phoneMode);
+                setOffset(0);
+              }
+            }}
+            className="h-8 w-40"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!phoneInput.trim()}
+            onClick={() => {
+              setActivePhoneFilter(phoneInput.trim());
+              setActivePhoneMode(phoneMode);
+              setOffset(0);
+            }}
+          >
+            Apply
+          </Button>
+          {activePhoneFilter && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setActivePhoneFilter('');
+                setPhoneInput('');
+                setOffset(0);
+              }}
+            >
+              <X className="size-3" />
+            </Button>
+          )}
+        </div>
         <div className="flex gap-2 ml-auto">
           <Button variant="outline" size="sm" onClick={onRecurring}>
             <RotateCcw className="size-4" />
