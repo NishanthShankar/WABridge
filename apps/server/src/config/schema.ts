@@ -46,12 +46,6 @@ export const configSchema = z.object({
       api_key: z.string().min(16),
     })
     .optional(),
-  ngrok: z
-    .object({
-      authtoken: z.string().min(1),
-      domain: z.string().optional(),
-    })
-    .optional(),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;

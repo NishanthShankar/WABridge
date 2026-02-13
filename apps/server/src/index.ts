@@ -10,8 +10,6 @@ import { createApp } from './api/routes.js';
 import { createMessageQueue } from './scheduler/queue.js';
 import { createMessageWorker } from './scheduler/worker.js';
 import type { ServerPlugin } from './plugin.js';
-import { startTunnel } from './tunnel.js';
-
 /**
  * openWA Server - WhatsApp Bridge
  *
@@ -115,16 +113,12 @@ async function main(): Promise<void> {
   // 9. Inject WebSocket into server
   injectWebSocket(server);
 
-  // 9.5. Start ngrok tunnel (if configured)
-  const tunnel = await startTunnel(config, logger, config.port);
-
   // 10. Start plugin (connect WhatsApp, delivery listeners, etc.)
   await plugin.start();
 
   // 11. Handle graceful shutdown
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutting down...');
-    if (tunnel) await tunnel.close();
     await messageWorker.close();
     await messageQueue.close();
     plugin.destroy();

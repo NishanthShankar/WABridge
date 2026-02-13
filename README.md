@@ -187,21 +187,25 @@ volumes:
   - ./config.yaml:/app/config.yaml:ro
 ```
 
-## ngrok Tunnel
+## Exposing Publicly (Cloudflare Tunnel)
 
-To expose your server publicly (e.g., for webhooks), add ngrok config:
-
-```yaml
-ngrok:
-  authtoken: your_ngrok_authtoken
-  domain: your-domain.ngrok-free.app  # optional
-```
-
-Install the optional dependency:
+To expose your server to the internet (e.g., from a home server or Mac Mini), use [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/):
 
 ```bash
-pnpm --filter @openwa/server add @ngrok/ngrok
+# Install
+brew install cloudflared
+
+# Authenticate (one-time)
+cloudflared tunnel login
+
+# Create a named tunnel
+cloudflared tunnel create wabridge
+
+# Run alongside the server
+cloudflared tunnel --url http://localhost:4000 wabridge
 ```
+
+This gives you a stable public URL with no port forwarding, no domain required, and free.
 
 ## Project Structure
 
