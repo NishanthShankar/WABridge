@@ -14,6 +14,9 @@ import type {
   TemplateCreate,
   TemplateUpdate,
   TemplatePreview,
+  Group,
+  GroupListParams,
+  GroupListResult,
   ScheduledMessage,
   ScheduleMessageCreate,
   ScheduleMessageUpdate,
@@ -140,6 +143,14 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ contactId }),
       }),
+  },
+
+  // ─── Groups ────────────────────────────────────────────────────────────────
+  groups: {
+    list: (params?: GroupListParams) =>
+      fetchJSON<GroupListResult>(`/groups${toSearchParams(params as Record<string, unknown>)}`),
+    get: (id: string) => fetchJSON<Group>(`/groups/${encodeURIComponent(id)}`),
+    sync: () => fetchJSON<{ synced: number }>('/groups/sync', { method: 'POST' }),
   },
 
   // ─── Messages ───────────────────────────────────────────────────────────────

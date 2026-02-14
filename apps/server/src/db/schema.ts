@@ -84,6 +84,24 @@ export const templates = sqliteTable('templates', {
   uniqueIndex('templates_name_idx').on(table.name),
 ]);
 
+// ─── Groups ─────────────────────────────────────────────────────────────────
+
+/** WhatsApp groups the connected account participates in */
+export const groups = sqliteTable('groups', {
+  id: text('id').primaryKey(),                  // Group JID e.g. 120363123456@g.us
+  name: text('name').notNull(),
+  description: text('description'),
+  participantCount: integer('participant_count'),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer('updated_at', { mode: 'timestamp' })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  index('groups_name_idx').on(table.name),
+]);
+
 // ─── Phase 3: Message Scheduling ─────────────────────────────────────────────
 
 /** Recurring rules (daily, weekly, monthly, yearly, birthday) */
@@ -118,8 +136,10 @@ export const recurringRules = sqliteTable('recurring_rules', {
 /** Scheduled messages (one-time and instances from recurring rules) */
 export const scheduledMessages = sqliteTable('scheduled_messages', {
   id: text('id').primaryKey(),
-  contactId: text('contact_id').notNull()
+  contactId: text('contact_id')
     .references(() => contacts.id, { onDelete: 'cascade' }),
+  groupId: text('group_id')
+    .references(() => groups.id, { onDelete: 'cascade' }),
   recurringRuleId: text('recurring_rule_id')
     .references(() => recurringRules.id, { onDelete: 'set null' }),
   content: text('content').notNull(),
@@ -142,6 +162,7 @@ export const scheduledMessages = sqliteTable('scheduled_messages', {
     .$defaultFn(() => new Date()),
 }, (table) => [
   index('sched_msg_contact_idx').on(table.contactId),
+  index('sched_msg_group_idx').on(table.groupId),
   index('sched_msg_status_idx').on(table.status),
   index('sched_msg_scheduled_at_idx').on(table.scheduledAt),
   index('sched_msg_wa_msg_id_idx').on(table.whatsappMessageId),
@@ -170,10 +191,18 @@ export const contactLabelsRelations = relations(contactLabels, ({ one }) => ({
   }),
 }));
 
+export const groupsRelations = relations(groups, ({ many }) => ({
+  scheduledMessages: many(scheduledMessages),
+}));
+
 export const scheduledMessagesRelations = relations(scheduledMessages, ({ one }) => ({
   contact: one(contacts, {
     fields: [scheduledMessages.contactId],
     references: [contacts.id],
+  }),
+  group: one(groups, {
+    fields: [scheduledMessages.groupId],
+    references: [groups.id],
   }),
   recurringRule: one(recurringRules, {
     fields: [scheduledMessages.recurringRuleId],

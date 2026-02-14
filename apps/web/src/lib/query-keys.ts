@@ -8,6 +8,10 @@ export const queryKeys = {
     list: (params: Record<string, unknown>) => ['contacts', 'list', params] as const,
     detail: (id: string) => ['contacts', 'detail', id] as const,
   },
+  groups: {
+    all: ['groups'] as const,
+    list: (params: Record<string, unknown>) => ['groups', 'list', params] as const,
+  },
   messages: {
     all: ['messages'] as const,
     list: (params: Record<string, unknown>) => ['messages', 'list', params] as const,
