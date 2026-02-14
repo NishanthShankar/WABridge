@@ -1,4 +1,4 @@
-import { eq, and, desc, sql, inArray, notInArray } from 'drizzle-orm';
+import { eq, and, desc, sql, inArray, notInArray, getTableColumns } from 'drizzle-orm';
 import type { Queue } from 'bullmq';
 import { scheduledMessages, contacts, recurringRules } from '../db/schema.js';
 import { scheduleOneTimeJob, cancelJob, rescheduleJob } from '../scheduler/jobs.js';
@@ -370,8 +370,13 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
      */
     getMessage(messageId: string) {
       return db
-        .select()
+        .select({
+          ...getTableColumns(scheduledMessages),
+          contactName: contacts.name,
+          contactPhone: contacts.phone,
+        })
         .from(scheduledMessages)
+        .leftJoin(contacts, eq(scheduledMessages.contactId, contacts.id))
         .where(eq(scheduledMessages.id, messageId))
         .get() ?? null;
     },
@@ -424,9 +429,14 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
 
       const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-      const data = db
-        .select()
+      const rows = db
+        .select({
+          ...getTableColumns(scheduledMessages),
+          contactName: contacts.name,
+          contactPhone: contacts.phone,
+        })
         .from(scheduledMessages)
+        .leftJoin(contacts, eq(scheduledMessages.contactId, contacts.id))
         .where(where)
         .orderBy(desc(scheduledMessages.createdAt))
         .limit(filters.limit)
@@ -440,7 +450,7 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
         .get();
 
       return {
-        data,
+        data: rows,
         total: totalResult?.count ?? 0,
         limit: filters.limit,
         offset: filters.offset,
