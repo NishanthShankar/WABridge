@@ -8,13 +8,14 @@ export const scheduleMessageSchema = z.object({
   contactId: z.string().uuid().optional(),
   phone: z.string().optional(),
   name: z.string().optional(),
+  groupId: z.string().optional(),
   content: z.string().min(1, 'Message content is required'),
   scheduledAt: z.string().datetime().optional(),
   mediaUrl: z.string().url().optional(),
   mediaType: mediaTypeEnum.optional(),
 }).refine(
-  (d) => d.contactId || d.phone,
-  { message: 'contactId or phone is required' },
+  (d) => d.contactId || d.phone || d.groupId,
+  { message: 'contactId, phone, or groupId is required' },
 ).refine(
   (d) => !d.mediaUrl || d.mediaType,
   { message: 'mediaType is required when mediaUrl is provided' },
@@ -126,11 +127,12 @@ export const bulkScheduleSchema = z.object({
     contactId: z.string().uuid().optional(),
     phone: z.string().optional(),
     name: z.string().optional(),
+    groupId: z.string().optional(),
     content: z.string().min(1),
     scheduledAt: z.string().datetime().optional(),
     mediaUrl: z.string().url().optional(),
     mediaType: mediaTypeEnum.optional(),
-  }).refine(d => d.contactId || d.phone, { message: 'contactId or phone required' })
+  }).refine(d => d.contactId || d.phone || d.groupId, { message: 'contactId, phone, or groupId required' })
     .refine(d => !d.mediaUrl || d.mediaType, { message: 'mediaType is required when mediaUrl is provided' }))
     .min(1).max(500),
 });

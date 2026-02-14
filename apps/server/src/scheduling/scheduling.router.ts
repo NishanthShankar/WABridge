@@ -44,10 +44,10 @@ export function createSchedulingRouter(queue: Queue) {
     '/',
     zValidator('json', scheduleMessageSchema),
     async (c) => {
-      const { contactId, phone, name, content, scheduledAt, mediaUrl, mediaType } = c.req.valid('json');
+      const { contactId, phone, name, groupId, content, scheduledAt, mediaUrl, mediaType } = c.req.valid('json');
       try {
         const service = getService(c);
-        const msg = await service.scheduleMessage(contactId, content, scheduledAt, phone, name, mediaUrl, mediaType);
+        const msg = await service.scheduleMessage(contactId, content, scheduledAt, phone, name, mediaUrl, mediaType, groupId);
         return c.json(msg, 201);
       } catch (err) {
         const error = err as Error & { statusCode?: number };

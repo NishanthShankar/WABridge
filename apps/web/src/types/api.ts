@@ -111,6 +111,30 @@ export interface TemplatePreview {
   unresolvedVariables: string[];
 }
 
+// ─── Groups ─────────────────────────────────────────────────────────────────
+
+export interface Group {
+  id: string;             // Group JID e.g. 120363123456@g.us
+  name: string;
+  description: string | null;
+  participantCount: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GroupListParams {
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface GroupListResult {
+  data: Group[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 // ─── Media ─────────────────────────────────────────────────────────────────
 
 export type MediaType = 'image' | 'video' | 'audio' | 'document';
@@ -121,9 +145,11 @@ export type MessageStatus = 'pending' | 'sent' | 'delivered' | 'failed' | 'cance
 
 export interface ScheduledMessage {
   id: string;
-  contactId: string;
+  contactId: string | null;
   contactName: string | null;
-  contactPhone: string;
+  contactPhone: string | null;
+  groupId: string | null;
+  groupName: string | null;
   recurringRuleId: string | null;
   content: string;
   scheduledAt: string;
@@ -144,6 +170,7 @@ export interface ScheduleMessageCreate {
   contactId?: string;
   phone?: string;
   name?: string;
+  groupId?: string;
   content: string;
   scheduledAt?: string;
   mediaUrl?: string;
@@ -154,6 +181,7 @@ export interface BulkScheduleItem {
   contactId?: string;
   phone?: string;
   name?: string;
+  groupId?: string;
   content: string;
   scheduledAt?: string;
   mediaUrl?: string;

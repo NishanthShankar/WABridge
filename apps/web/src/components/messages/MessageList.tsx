@@ -14,6 +14,7 @@ import {
   Clock,
   Filter,
   X,
+  Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -166,14 +167,23 @@ export function MessageList({ onSchedule, onRecurring }: MessageListProps) {
     {
       header: 'Recipient',
       accessor: (m) => (
-        <div>
-          <span className="font-medium">
-            {m.contactName || m.contactPhone}
-          </span>
-          {m.contactName && (
-            <span className="ml-1 text-xs text-muted-foreground font-mono">
-              {m.contactPhone}
-            </span>
+        <div className="flex items-center gap-1.5">
+          {m.groupName ? (
+            <>
+              <Users className="size-3.5 text-muted-foreground shrink-0" />
+              <span className="font-medium">{m.groupName}</span>
+            </>
+          ) : (
+            <>
+              <span className="font-medium">
+                {m.contactName || m.contactPhone}
+              </span>
+              {m.contactName && m.contactPhone && (
+                <span className="ml-1 text-xs text-muted-foreground font-mono">
+                  {m.contactPhone}
+                </span>
+              )}
+            </>
           )}
         </div>
       ),

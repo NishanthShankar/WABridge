@@ -12,6 +12,7 @@ import { createContactsRouter } from '../contacts/contacts.router.js';
 import { createLabelsRouter } from '../labels/labels.router.js';
 import { createTemplatesRouter } from '../templates/templates.router.js';
 import { createSchedulingRouter } from '../scheduling/scheduling.router.js';
+import { createGroupsRouter } from '../groups/groups.router.js';
 import { createRateLimitRouter } from '../rate-limit/rate-limit.router.js';
 
 /** Relative path from CWD (apps/server/) to the web build output */
@@ -71,6 +72,9 @@ export function createApp(plugin: ServerPlugin, messageQueue: Queue) {
 
   // Messages API
   app.route('/api/messages', createSchedulingRouter(messageQueue));
+
+  // Groups API
+  app.route('/api/groups', createGroupsRouter());
 
   // Rate Limit API
   app.route('/api/rate-limit', createRateLimitRouter());

@@ -1,7 +1,7 @@
 import { Worker } from 'bullmq';
 import { eq, and, inArray, sql } from 'drizzle-orm';
 import type { AnyMessageContent } from '@whiskeysockets/baileys';
-import { scheduledMessages, contacts, recurringRules } from '../db/schema.js';
+import { scheduledMessages, contacts, groups, recurringRules } from '../db/schema.js';
 import type { AppConfig } from '../config/schema.js';
 import type { AppContext } from '../context.js';
 
@@ -179,15 +179,23 @@ async function processSendJob(
     return;
   }
 
-  // Get contact phone number
-  const contact = db
-    .select()
-    .from(contacts)
-    .where(eq(contacts.id, msg.contactId))
-    .get();
+  // Resolve JID: group messages use groupId directly, individual messages look up contact
+  let jid: string;
+  if (msg.groupId) {
+    jid = msg.groupId; // Already a JID like 120363123456@g.us
+  } else if (msg.contactId) {
+    const contact = db
+      .select()
+      .from(contacts)
+      .where(eq(contacts.id, msg.contactId))
+      .get();
 
-  if (!contact) {
-    throw new Error(`Contact ${msg.contactId} not found`);
+    if (!contact) {
+      throw new Error(`Contact ${msg.contactId} not found`);
+    }
+    jid = contact.phone.replace('+', '') + '@s.whatsapp.net';
+  } else {
+    throw new Error('Message has neither contactId nor groupId');
   }
 
   // Get WhatsApp socket
@@ -195,9 +203,6 @@ async function processSendJob(
   if (!sock) {
     throw new Error('WhatsApp not connected');
   }
-
-  // Build JID from phone number
-  const jid = contact.phone.replace('+', '') + '@s.whatsapp.net';
 
   // Send message via Baileys (with optional media)
   const payload = buildMessagePayload(msg.content, msg.mediaUrl, msg.mediaType);

@@ -1,6 +1,6 @@
 import { eq, and, desc, sql, inArray, notInArray, getTableColumns } from 'drizzle-orm';
 import type { Queue } from 'bullmq';
-import { scheduledMessages, contacts, recurringRules } from '../db/schema.js';
+import { scheduledMessages, contacts, recurringRules, groups } from '../db/schema.js';
 import { scheduleOneTimeJob, cancelJob, rescheduleJob } from '../scheduler/jobs.js';
 import { normalizeIndianPhone } from '../contacts/phone.js';
 import type { RateLimiter } from '../rate-limit/rate-limiter.js';
@@ -138,8 +138,15 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
      *
      * @throws Error if contact does not exist
      */
-    async scheduleMessage(contactId: string | undefined, content: string, scheduledAt?: string, phone?: string, name?: string, mediaUrl?: string, mediaType?: string) {
-      const resolvedContactId = resolveContactId(contactId, phone, name);
+    async scheduleMessage(contactId: string | undefined, content: string, scheduledAt?: string, phone?: string, name?: string, mediaUrl?: string, mediaType?: string, groupId?: string) {
+      // Group messages skip contact resolution
+      let resolvedContactId: string | null = null;
+      if (groupId) {
+        const group = db.select().from(groups).where(eq(groups.id, groupId)).get();
+        if (!group) throw new Error('Group not found');
+      } else {
+        resolvedContactId = resolveContactId(contactId, phone, name);
+      }
 
       const now = new Date();
       const sendAt = scheduledAt ? new Date(scheduledAt) : now;
@@ -168,6 +175,7 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
         .values({
           id,
           contactId: resolvedContactId,
+          groupId: groupId ?? null,
           content,
           scheduledAt: sendAt,
           status: 'pending',
@@ -201,6 +209,7 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
       contactId?: string;
       phone?: string;
       name?: string;
+      groupId?: string;
       content: string;
       scheduledAt?: string;
       mediaUrl?: string;
@@ -233,7 +242,13 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         try {
-          const resolvedContactId = resolveContactId(item.contactId, item.phone, item.name);
+          let resolvedContactId: string | null = null;
+          if (item.groupId) {
+            const group = db.select().from(groups).where(eq(groups.id, item.groupId)).get();
+            if (!group) throw new Error('Group not found');
+          } else {
+            resolvedContactId = resolveContactId(item.contactId, item.phone, item.name);
+          }
 
           const sendAt = item.scheduledAt ? new Date(item.scheduledAt) : now;
           const isImmediate = !item.scheduledAt || sendAt.getTime() <= now.getTime();
@@ -252,6 +267,7 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
             .values({
               id,
               contactId: resolvedContactId,
+              groupId: item.groupId ?? null,
               content: item.content,
               scheduledAt: sendAt,
               status: 'pending',
@@ -374,9 +390,11 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
           ...getTableColumns(scheduledMessages),
           contactName: contacts.name,
           contactPhone: contacts.phone,
+          groupName: groups.name,
         })
         .from(scheduledMessages)
         .leftJoin(contacts, eq(scheduledMessages.contactId, contacts.id))
+        .leftJoin(groups, eq(scheduledMessages.groupId, groups.id))
         .where(eq(scheduledMessages.id, messageId))
         .get() ?? null;
     },
@@ -434,9 +452,11 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
           ...getTableColumns(scheduledMessages),
           contactName: contacts.name,
           contactPhone: contacts.phone,
+          groupName: groups.name,
         })
         .from(scheduledMessages)
         .leftJoin(contacts, eq(scheduledMessages.contactId, contacts.id))
+        .leftJoin(groups, eq(scheduledMessages.groupId, groups.id))
         .where(where)
         .orderBy(desc(scheduledMessages.createdAt))
         .limit(filters.limit)
