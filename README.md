@@ -8,6 +8,7 @@ Built with [Baileys](https://github.com/WhiskeySockets/Baileys) (no official Wha
 
 - **WhatsApp Bridge** - Connect by scanning a QR code, auto-reconnect with encrypted session persistence
 - **Contact Management** - CRUD contacts, labels, CSV/Excel import, birthday tracking
+- **Group Messaging** - Send to WhatsApp groups, sync group metadata from WhatsApp
 - **Message Scheduling** - Send immediately or schedule for later, bulk send up to 500 messages
 - **Recurring Messages** - Daily, weekly, monthly, yearly, and custom interval rules
 - **Template Engine** - Reusable message templates with `{{variable}}` substitution
@@ -95,6 +96,24 @@ curl -X POST http://localhost:4000/api/messages \
 
 That's it. The message sends immediately. To schedule for later, add `"scheduledAt": "2025-01-15T09:00:00Z"`.
 
+To send to a **group**, first sync groups, then use the group JID:
+
+```bash
+# Sync groups from WhatsApp
+curl -X POST http://localhost:4000/api/groups/sync \
+  -H "X-API-Key: sk_your_key_here"
+
+# List groups to find the JID
+curl http://localhost:4000/api/groups \
+  -H "X-API-Key: sk_your_key_here"
+
+# Send to a group
+curl -X POST http://localhost:4000/api/messages \
+  -H "X-API-Key: sk_your_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{"groupId": "120363123456@g.us", "content": "Hello group!"}'
+```
+
 ## Configuration
 
 WABridge auto-generates `config.yaml` on first boot. You can also create it manually:
@@ -176,7 +195,11 @@ POST   /api/labels                       # Create
 PUT    /api/labels/:id                   # Update
 DELETE /api/labels/:id                   # Delete
 
-POST   /api/messages                     # Send or schedule a message
+POST   /api/groups/sync                  # Sync groups from WhatsApp
+GET    /api/groups                       # List groups (search, limit, offset)
+GET    /api/groups/:id                   # Get single group
+
+POST   /api/messages                     # Send or schedule (to contact or group)
 POST   /api/messages/bulk                # Bulk send (up to 500)
 GET    /api/messages                     # List (status, phone, phoneMode, limit, offset)
 GET    /api/messages/:id                 # Get
