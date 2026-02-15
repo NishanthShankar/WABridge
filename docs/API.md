@@ -53,6 +53,18 @@ curl -X POST http://localhost:4000/api/messages \
   }'
 ```
 
+### Send a message to a group
+
+```bash
+curl -X POST http://localhost:4000/api/messages \
+  -H "X-API-Key: sk_your_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "groupId": "120363123456@g.us",
+    "content": "Hello group!"
+  }'
+```
+
 ### Bulk send to multiple contacts
 
 ```bash
@@ -349,21 +361,78 @@ Preview a template rendered with a contact's data.
 
 ---
 
+## Groups
+
+Sync and browse WhatsApp groups the connected account participates in. Groups are identified by their JID (e.g. `120363123456@g.us`).
+
+### POST /api/groups/sync
+
+Fetch all groups from WhatsApp and upsert into the local database. Call this to discover new groups or refresh metadata.
+
+**Response:**
+
+```json
+{
+  "synced": 12
+}
+```
+
+Returns `503` if WhatsApp is not connected.
+
+### GET /api/groups
+
+List synced groups with optional search.
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `search` | string | — | Search by group name |
+| `limit` | number | 50 | 1–200 |
+| `offset` | number | 0 | Pagination offset |
+
+**Response:**
+
+```json
+{
+  "data": [
+    {
+      "id": "120363123456@g.us",
+      "name": "Project Team",
+      "description": "Team chat for Project X",
+      "participantCount": 15,
+      "createdAt": "2025-01-15T10:00:00.000Z",
+      "updatedAt": "2025-01-15T10:00:00.000Z"
+    }
+  ],
+  "total": 12,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+### GET /api/groups/:id
+
+Get a single group by JID. Returns `404` if not found.
+
+---
+
 ## Messages
 
 ### POST /api/messages
 
-Schedule a message or send immediately.
+Schedule a message or send immediately. Supports both individual contacts and groups.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `contactId` | string (UUID) | One of these | Existing contact ID |
 | `phone` | string | is required | Phone number (auto-creates contact if new) |
+| `groupId` | string | | Group JID (e.g. `120363123456@g.us`) |
 | `name` | string | No | Contact name (used with `phone`) |
 | `content` | string | Yes | Message text (min 1 char) |
 | `scheduledAt` | string | No | ISO datetime. Omit to send immediately. |
 | `mediaUrl` | string (URL) | No | URL to media file |
 | `mediaType` | string | If mediaUrl set | `image`, `video`, `audio`, or `document` |
+
+> Provide exactly one of `contactId`, `phone`, or `groupId`. For group messages, the group must be synced first via `POST /api/groups/sync`.
 
 **Response:** `201`
 
@@ -371,6 +440,7 @@ Schedule a message or send immediately.
 {
   "id": "msg-uuid",
   "contactId": "contact-uuid",
+  "groupId": null,
   "content": "Hello!",
   "scheduledAt": "2025-01-15T10:00:00.000Z",
   "status": "pending",
@@ -394,20 +464,21 @@ Schedule a message or send immediately.
 ```
 
 **Errors:**
-- `404` — Contact not found
+- `404` — Contact or group not found
 - `429` — Daily rate limit reached
 
 > If `scheduledAt` is omitted or in the past, the message sends immediately.
 
 ### POST /api/messages/bulk
 
-Send up to 500 messages at once.
+Send up to 500 messages at once. Each item accepts `contactId`, `phone`, or `groupId`.
 
 ```json
 {
   "messages": [
     { "phone": "919876543210", "content": "Hello A!" },
-    { "phone": "919876543211", "content": "Hello B!", "scheduledAt": "2025-03-15T03:30:00.000Z" }
+    { "phone": "919876543211", "content": "Hello B!", "scheduledAt": "2025-03-15T03:30:00.000Z" },
+    { "groupId": "120363123456@g.us", "content": "Hello group!" }
   ]
 }
 ```
@@ -441,10 +512,12 @@ List messages with filters.
 
 ```json
 {
-  "data": [ /* ScheduledMessage objects */ ],
+  "data": [ /* ScheduledMessage objects with contactName, contactPhone, groupName */ ],
   "total": 250
 }
 ```
+
+Each message includes `contactName`, `contactPhone` (for individual messages) and `groupName` (for group messages).
 
 **Phone filter examples:**
 
