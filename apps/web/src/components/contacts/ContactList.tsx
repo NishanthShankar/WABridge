@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Search, Upload, UserPlus, Users } from 'lucide-react';
 import { format } from 'date-fns';
@@ -31,11 +31,11 @@ export function ContactList({ onAdd, onEdit, onImport }: ContactListProps) {
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
   // Debounce search input
-  const searchTimeoutRef = useState<ReturnType<typeof setTimeout> | null>(null);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   function handleSearchChange(value: string) {
     setSearch(value);
-    if (searchTimeoutRef[0]) clearTimeout(searchTimeoutRef[0]);
-    searchTimeoutRef[0] = setTimeout(() => {
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = setTimeout(() => {
       setDebouncedSearch(value);
       setPage(1);
     }, 300);
