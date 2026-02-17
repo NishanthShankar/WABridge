@@ -121,7 +121,7 @@ export const api = {
 
   // ─── Labels ─────────────────────────────────────────────────────────────────
   labels: {
-    list: () => fetchJSON<Label[]>('/labels'),
+    list: () => fetchJSON<{ data: Label[] }>('/labels').then((r) => r.data),
     create: (data: LabelCreate) =>
       fetchJSON<Label>('/labels', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: string, data: LabelUpdate) =>

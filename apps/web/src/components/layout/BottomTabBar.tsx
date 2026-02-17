@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router';
-import { LayoutDashboard, Users, MessageSquare, Settings } from 'lucide-react';
+import { LayoutDashboard, MessageSquare, Settings, FileText } from 'lucide-react';
 import { ROUTES } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 
 const tabs = [
   { to: ROUTES.DASHBOARD, label: 'Dashboard', icon: LayoutDashboard },
-  { to: ROUTES.CONTACTS, label: 'Contacts', icon: Users },
   { to: ROUTES.MESSAGES, label: 'Messages', icon: MessageSquare },
   { to: ROUTES.SETTINGS, label: 'Settings', icon: Settings },
+  { to: ROUTES.DOCS, label: 'Docs', icon: FileText },
 ];
 
 export function BottomTabBar() {

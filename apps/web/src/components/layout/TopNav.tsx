@@ -14,9 +14,9 @@ import { cn } from '@/lib/utils';
 
 const navLinks = [
   { to: ROUTES.DASHBOARD, label: 'Dashboard' },
-  { to: ROUTES.CONTACTS, label: 'Contacts' },
   { to: ROUTES.MESSAGES, label: 'Messages' },
   { to: ROUTES.SETTINGS, label: 'Settings' },
+  { to: ROUTES.DOCS, label: 'API Docs' },
 ];
 
 export function TopNav() {
@@ -29,7 +29,7 @@ export function TopNav() {
       <div className="flex w-full items-center gap-6 px-6">
         {/* Logo */}
         <NavLink to={ROUTES.DASHBOARD} className="flex items-center gap-2 font-semibold">
-          <span className="text-lg">openWA</span>
+          <span className="text-lg">WABridge</span>
         </NavLink>
 
         {/* Nav links */}

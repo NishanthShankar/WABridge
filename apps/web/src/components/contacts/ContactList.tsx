@@ -76,9 +76,9 @@ export function ContactList({ onAdd, onEdit, onImport }: ContactListProps) {
     {
       header: 'Labels',
       accessor: (c) =>
-        c.labels.length > 0 ? (
+        (c.labels ?? []).length > 0 ? (
           <div className="flex flex-wrap gap-1">
-            {c.labels.map((label) => (
+            {(c.labels ?? []).map((label) => (
               <Badge
                 key={label.id}
                 variant="secondary"
