@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { serveStatic } from '@hono/node-server/serve-static';
 import type { Queue } from 'bullmq';
@@ -14,6 +15,7 @@ import { createTemplatesRouter } from '../templates/templates.router.js';
 import { createSchedulingRouter } from '../scheduling/scheduling.router.js';
 import { createGroupsRouter } from '../groups/groups.router.js';
 import { createRateLimitRouter } from '../rate-limit/rate-limit.router.js';
+import { createWebhooksRouter } from '../webhooks/webhooks.router.js';
 
 /** Relative path from CWD (apps/server/) to the web build output */
 const WEB_DIST = '../web/dist';
@@ -38,6 +40,22 @@ export function createApp(plugin: ServerPlugin, messageQueue: Queue) {
 
   // Security headers on all responses
   app.use('*', secureHeaders());
+
+  // CORS for public health endpoint — must register BEFORE the API auth
+  // middleware so preflight OPTIONS (which browsers send without x-api-key)
+  // is handled before auth rejects the request.
+  app.use(
+    '/api/health',
+    cors({
+      origin: (origin) => {
+        if (origin === 'https://spaxie.vercel.app') return origin;
+        if (origin === 'https://leads.thelandbankers.com') return origin;
+        if (/^https:\/\/[a-z0-9-]+\.paxie\.cloud$/i.test(origin)) return origin;
+        return null;
+      },
+      allowHeaders: ['x-api-key', 'content-type'],
+    }),
+  );
 
   // Create WebSocket handler with the SAME Hono app instance
   const { wsHandler, injectWebSocket } = plugin.setupWebSocket(app);
@@ -84,6 +102,9 @@ export function createApp(plugin: ServerPlugin, messageQueue: Queue) {
 
   // Templates API
   app.route('/api/templates', createTemplatesRouter());
+
+  // Webhooks API
+  app.route('/api/webhooks', createWebhooksRouter());
 
   // Test send endpoint (development only)
   app.post('/api/test-send', async (c) => {

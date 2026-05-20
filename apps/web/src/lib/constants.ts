@@ -5,6 +5,7 @@ export const ROUTES = {
   MESSAGES: '/messages',
   SETTINGS: '/settings',
   CONNECT: '/connect',
+  DOCS: '/docs',
 } as const;
 
 /** Responsive breakpoints (matches Tailwind defaults) */

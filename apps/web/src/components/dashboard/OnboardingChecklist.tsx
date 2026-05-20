@@ -74,7 +74,7 @@ export function OnboardingChecklist() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Get started with openWA</CardTitle>
+        <CardTitle className="text-base">Get started with WABridge</CardTitle>
         <CardAction>
           <Button variant="ghost" size="icon-xs" onClick={handleDismiss} title="Dismiss checklist">
             <X className="size-4" />

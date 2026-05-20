@@ -38,7 +38,7 @@ export function LoginPage({ onLogin }: { onLogin: () => void }) {
     <div className="flex min-h-screen items-center justify-center p-4 bg-background">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <CardTitle>openWA</CardTitle>
+          <CardTitle>WABridge</CardTitle>
           <CardDescription>Enter your API key to continue</CardDescription>
         </CardHeader>
         <CardContent>

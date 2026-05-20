@@ -54,7 +54,6 @@ async function main(): Promise<void> {
 
   try {
     // Try loading multi-tenant plugin (optional private package)
-    // @ts-expect-error -- optional dependency, not installed in single-tenant mode
     const mod = await import('@openwa/multi-tenant');
     plugin = await (mod.default as (params: {
       config: AppConfig;

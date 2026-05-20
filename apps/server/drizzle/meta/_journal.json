@@ -36,6 +36,20 @@
       "when": 1771044000000,
       "tag": "0004_groups",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1775218248222,
+      "tag": "0005_deep_white_queen",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1779840000000,
+      "tag": "0006_webhooks_phone_nullable",
+      "breakpoints": true
     }
   ]
 }

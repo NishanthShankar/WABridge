@@ -33,7 +33,7 @@ export function DashboardPage() {
   return (
     <div className="space-y-4 p-4 md:space-y-6 md:p-6">
       <h1 className="text-2xl font-semibold tracking-tight">
-        {isNewUser ? 'Welcome to openWA' : 'Dashboard'}
+        {isNewUser ? 'Welcome to WABridge' : 'Dashboard'}
       </h1>
 
       {/* Onboarding checklist - shows only for incomplete setup */}

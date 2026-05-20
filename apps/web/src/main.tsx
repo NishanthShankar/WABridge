@@ -10,6 +10,7 @@ import { ContactsPage } from '@/pages/ContactsPage';
 import { MessagesPage } from '@/pages/MessagesPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { ConnectPage } from '@/pages/ConnectPage';
+import { DocsPage } from '@/pages/docs/DocsPage';
 import './index.css';
 
 const queryClient = new QueryClient({
@@ -32,6 +33,7 @@ const router = createBrowserRouter([
       { path: 'messages', element: <MessagesPage /> },
       { path: 'settings', element: <SettingsPage /> },
       { path: 'connect', element: <ConnectPage /> },
+      { path: 'docs', element: <DocsPage /> },
     ],
   },
 ]);

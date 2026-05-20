@@ -296,6 +296,31 @@ export interface RateLimitStatus {
   warningThreshold: number;
 }
 
+// ─── Webhooks ───────────────────────────────────────────────────────────────
+
+export interface Webhook {
+  id: string;
+  phone: string | null;
+  url: string;
+  enabled: boolean;
+  secret: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WebhookCreate {
+  phone?: string;
+  url: string;
+  secret?: string;
+}
+
+export interface WebhookUpdate {
+  phone?: string;
+  url?: string;
+  enabled?: boolean;
+  secret?: string | null;
+}
+
 // ─── WebSocket Events ───────────────────────────────────────────────────────
 
 export type WebSocketEvent =
