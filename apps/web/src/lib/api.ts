@@ -30,6 +30,9 @@ import type {
   RecurringRuleListParams,
   RecurringRuleListResult,
   RateLimitStatus,
+  Webhook,
+  WebhookCreate,
+  WebhookUpdate,
 } from '@/types/api';
 
 class ApiError extends Error {
@@ -196,6 +199,16 @@ export const api = {
   // ─── Rate Limit ─────────────────────────────────────────────────────────────
   rateLimit: {
     status: () => fetchJSON<RateLimitStatus>('/rate-limit/status'),
+  },
+
+  // ─── Webhooks ──────────────────────────────────────────────────────────────
+  webhooks: {
+    list: () => fetchJSON<Webhook[]>('/webhooks'),
+    create: (data: WebhookCreate) =>
+      fetchJSON<Webhook>('/webhooks', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: WebhookUpdate) =>
+      fetchJSON<Webhook>(`/webhooks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: string) => fetchJSON<void>(`/webhooks/${id}`, { method: 'DELETE' }),
   },
 };
 

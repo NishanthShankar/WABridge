@@ -14,6 +14,7 @@ import { ConnectionManager } from './bridge/socket.js';
 import { createRateLimiter } from './rate-limit/rate-limiter.js';
 import { createWebSocketHandler } from './api/ws.js';
 import { setupDeliveryListener } from './delivery/delivery.listener.js';
+import { setupWebhookListener } from './webhooks/webhook.listener.js';
 
 /**
  * Create the single-tenant server plugin.
@@ -105,7 +106,8 @@ export async function createSingleTenantPlugin(params: {
     async start() {
       connectionManager.onConnected((sock) => {
         setupDeliveryListener(sock, db, broadcastFn);
-        logger.info('Delivery status listener attached');
+        setupWebhookListener(sock, db, logger.child({ module: 'webhooks' }));
+        logger.info('Delivery status + webhook listeners attached');
       });
 
       logger.info('Starting WhatsApp connection...');

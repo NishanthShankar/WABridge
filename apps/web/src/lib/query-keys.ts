@@ -34,4 +34,7 @@ export const queryKeys = {
   dashboard: {
     all: ['dashboard'] as const,
   },
+  webhooks: {
+    all: ['webhooks'] as const,
+  },
 } as const;

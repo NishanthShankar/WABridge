@@ -773,6 +773,122 @@ All errors return:
 
 ---
 
+## Webhooks
+
+Register webhook URLs to get notified when a message is received from a specific phone number. Supports text messages and media (images, documents, audio, stickers).
+
+### POST /api/webhooks
+
+Create a webhook.
+
+**Body:**
+
+```json
+{
+  "phone": "919812345678",
+  "url": "https://example.com/webhook",
+  "secret": "optional-hmac-secret"
+}
+```
+
+**Response (201):**
+
+```json
+{
+  "id": "uuid",
+  "phone": "919812345678",
+  "url": "https://example.com/webhook",
+  "enabled": true,
+  "secret": "optional-hmac-secret",
+  "createdAt": "2025-01-15T10:00:00.000Z",
+  "updatedAt": "2025-01-15T10:00:00.000Z"
+}
+```
+
+### GET /api/webhooks
+
+List all webhooks.
+
+### GET /api/webhooks/:id
+
+Get a single webhook by ID.
+
+### PUT /api/webhooks/:id
+
+Update a webhook. All fields are optional.
+
+**Body:**
+
+```json
+{
+  "phone": "919812345678",
+  "url": "https://example.com/new-url",
+  "enabled": false,
+  "secret": null
+}
+```
+
+### DELETE /api/webhooks/:id
+
+Delete a webhook.
+
+### Webhook Payload
+
+When a matching message arrives, WABridge sends a `POST` request to the webhook URL:
+
+```json
+{
+  "event": "message.received",
+  "timestamp": "2025-01-15T10:30:00.000Z",
+  "from": "919812345678",
+  "messageId": "ABCDEF123456",
+  "text": "Hello!",
+  "hasMedia": false,
+  "rawType": "conversation"
+}
+```
+
+**With media (image, document, audio, sticker):**
+
+```json
+{
+  "event": "message.received",
+  "timestamp": "2025-01-15T10:30:00.000Z",
+  "from": "919812345678",
+  "messageId": "ABCDEF123456",
+  "text": null,
+  "hasMedia": true,
+  "rawType": "imageMessage",
+  "media": {
+    "type": "image",
+    "mimetype": "image/jpeg",
+    "data": "<base64-encoded file>",
+    "filename": null,
+    "caption": "Check this out"
+  }
+}
+```
+
+### Signature Verification
+
+If a `secret` is configured, WABridge includes an `X-Webhook-Signature` header containing an HMAC-SHA256 hex digest of the request body:
+
+```
+X-Webhook-Signature: a1b2c3...
+```
+
+Verify on your server:
+
+```js
+const crypto = require('crypto');
+const expected = crypto.createHmac('sha256', secret).update(body).digest('hex');
+if (signature !== expected) throw new Error('Invalid signature');
+```
+
+> **Note:** Video messages are not included in webhook payloads to avoid oversized requests.
+
+---
+
 ## Phone Number Format
 
 WABridge normalizes all phone numbers to Indian format:

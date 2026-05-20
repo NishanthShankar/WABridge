@@ -168,6 +168,25 @@ export const scheduledMessages = sqliteTable('scheduled_messages', {
   index('sched_msg_wa_msg_id_idx').on(table.whatsappMessageId),
 ]);
 
+// ─── Webhooks ───────────────────────────────────────────────────────────────
+
+/** Webhooks triggered when a message is received from a specific number */
+export const webhooks = sqliteTable('webhooks', {
+  id: text('id').primaryKey(),
+  phone: text('phone'),                          // E.164 format: sender phone to watch (null = all senders)
+  url: text('url').notNull(),                    // URL to POST to
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  secret: text('secret'),                        // Optional HMAC secret for signature verification
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer('updated_at', { mode: 'timestamp' })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  index('webhooks_phone_idx').on(table.phone),
+]);
+
 // ─── Drizzle Relations (for relational query API) ────────────────────────────
 
 export const contactsRelations = relations(contacts, ({ many }) => ({

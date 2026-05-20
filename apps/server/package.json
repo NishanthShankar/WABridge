@@ -13,7 +13,8 @@
     "./bridge/types": "./src/bridge/types.ts",
     "./rate-limit/rate-limiter": "./src/rate-limit/rate-limiter.ts",
     "./crypto/vault": "./src/crypto/vault.ts",
-    "./delivery/delivery.listener": "./src/delivery/delivery.listener.ts"
+    "./delivery/delivery.listener": "./src/delivery/delivery.listener.ts",
+    "./webhooks/webhook.listener": "./src/webhooks/webhook.listener.ts"
   },
   "scripts": {
     "build": "tsc",

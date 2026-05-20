@@ -1,5 +1,6 @@
 import makeWASocket, {
   DisconnectReason,
+  fetchLatestBaileysVersion,
   type ConnectionState,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
@@ -114,8 +115,13 @@ export class ConnectionManager {
       this.masterKey,
     );
 
+    // Fetch latest WA Web version to avoid 405 disconnects from expired versions
+    const { version } = await fetchLatestBaileysVersion();
+    this.logger.info({ version }, 'Using WA Web version');
+
     this.sock = makeWASocket({
       auth: state,
+      version,
       // NOTE: printQRInTerminal is deprecated in Baileys v7 -- we handle QR display ourselves
       browser: [this.config.whatsapp.browser_name, 'Chrome', '22.0.0'],
       markOnlineOnConnect: this.config.whatsapp.mark_online,
@@ -400,6 +406,24 @@ export class ConnectionManager {
    */
   getSocket(): ReturnType<typeof makeWASocket> | null {
     return this.sock;
+  }
+
+  /**
+   * Force-reset: clear auth state and start fresh QR pairing.
+   * Used by admin API when a tenant is stuck in a reconnect loop.
+   */
+  async forceResetToPairing(): Promise<void> {
+    this.cleanupSocket();
+    this.clearAuthState();
+    this.reconnectAttempt = 0;
+    this.retryStartedAt = null;
+    this.status = 'pairing';
+    this.account = null;
+    this.connectedAt = null;
+    this.lastQrDataUrl = null;
+    this.broadcast({ type: 'status', data: this.getHealth() });
+    this.logger.info('Force-reset to pairing mode');
+    await this.connect();
   }
 
   /**
