@@ -70,6 +70,12 @@ export function createApp(plugin: ServerPlugin, messageQueue: Queue) {
     });
   }
 
+  // Mount public routes BEFORE the /api/* auth middleware so they remain
+  // unauthenticated. Plugins use this for token-in-URL endpoints (e.g. pairing).
+  if (plugin.publicRoutes) {
+    app.route(plugin.publicRoutes.basePath, plugin.publicRoutes.router);
+  }
+
   // Apply plugin middleware to all API routes (sets AppContext per request)
   app.use('/api/*', plugin.apiMiddleware);
 

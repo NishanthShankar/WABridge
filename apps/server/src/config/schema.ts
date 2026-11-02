@@ -46,6 +46,12 @@ export const configSchema = z.object({
       api_key: z.string().min(16),
     })
     .optional(),
+  /**
+   * Public base URL used when building shareable URLs (e.g. pairing tokens).
+   * Example: "https://wabridge.co.in". If unset, admin endpoints that would
+   * include such a URL will return null for the URL field.
+   */
+  public_base_url: z.string().url().optional(),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;

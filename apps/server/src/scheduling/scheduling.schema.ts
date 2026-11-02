@@ -9,7 +9,7 @@ export const scheduleMessageSchema = z.object({
   phone: z.string().optional(),
   name: z.string().optional(),
   groupId: z.string().optional(),
-  content: z.string().min(1, 'Message content is required'),
+  content: z.string().default(''),
   scheduledAt: z.string().datetime().optional(),
   mediaUrl: z.string().url().optional(),
   mediaType: mediaTypeEnum.optional(),
@@ -19,11 +19,14 @@ export const scheduleMessageSchema = z.object({
 ).refine(
   (d) => !d.mediaUrl || d.mediaType,
   { message: 'mediaType is required when mediaUrl is provided' },
+).refine(
+  (d) => d.content.length > 0 || !!d.mediaUrl,
+  { message: 'content or mediaUrl is required', path: ['content'] },
 );
 
 /** Schema for editing a pending message */
 export const editMessageSchema = z.object({
-  content: z.string().min(1).optional(),
+  content: z.string().optional(),
   scheduledAt: z.string().datetime().optional(),
   mediaUrl: z.string().url().nullable().optional(),
   mediaType: mediaTypeEnum.nullable().optional(),
@@ -64,7 +67,7 @@ export const createRecurringRuleSchema = z.object({
   phone: z.string().optional(),
   name: z.string().optional(),
   type: recurringTypeEnum,
-  content: z.string().min(1, 'Message content is required'),
+  content: z.string().default(''),
   /** Hour of day to send (0-23, IST). Defaults to config default_send_hour */
   sendHour: z.number().min(0).max(23).optional(),
   /** Minute of hour to send (0-59). Defaults to 0 */
@@ -89,11 +92,14 @@ export const createRecurringRuleSchema = z.object({
 ).refine(
   (d) => !d.mediaUrl || d.mediaType,
   { message: 'mediaType is required when mediaUrl is provided' },
+).refine(
+  (d) => d.content.length > 0 || !!d.mediaUrl,
+  { message: 'content or mediaUrl is required', path: ['content'] },
 );
 
 /** Schema for updating a recurring rule */
 export const updateRecurringRuleSchema = z.object({
-  content: z.string().min(1).optional(),
+  content: z.string().optional(),
   sendHour: z.number().min(0).max(23).optional(),
   sendMinute: z.number().min(0).max(59).optional(),
   dayOfWeek: z.number().min(0).max(6).optional(),
@@ -128,11 +134,12 @@ export const bulkScheduleSchema = z.object({
     phone: z.string().optional(),
     name: z.string().optional(),
     groupId: z.string().optional(),
-    content: z.string().min(1),
+    content: z.string().default(''),
     scheduledAt: z.string().datetime().optional(),
     mediaUrl: z.string().url().optional(),
     mediaType: mediaTypeEnum.optional(),
   }).refine(d => d.contactId || d.phone || d.groupId, { message: 'contactId, phone, or groupId required' })
-    .refine(d => !d.mediaUrl || d.mediaType, { message: 'mediaType is required when mediaUrl is provided' }))
+    .refine(d => !d.mediaUrl || d.mediaType, { message: 'mediaType is required when mediaUrl is provided' })
+    .refine(d => d.content.length > 0 || !!d.mediaUrl, { message: 'content or mediaUrl is required', path: ['content'] }))
     .min(1).max(500),
 });
