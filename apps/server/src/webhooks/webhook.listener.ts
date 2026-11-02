@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import type makeWASocket from '@whiskeysockets/baileys';
 import { downloadContentFromMessage } from '@whiskeysockets/baileys';
-import type { DownloadableMessage, MediaType, WAMessageKey } from '@whiskeysockets/baileys';
+import type { DownloadableMessage, MediaType, WAMessageKey, proto } from '@whiskeysockets/baileys';
 import type { Logger } from 'pino';
 import { createWebhooksService } from './webhooks.service.js';
 import type { createDatabase } from '../db/client.js';
@@ -108,6 +108,9 @@ export function setupWebhookListener(
         break; // only one media type per message
       }
 
+      // Extract shared location (static pin or live location)
+      const location = extractLocation(msg.message);
+
       // Build webhook payload
       const payload: Record<string, unknown> = {
         event: 'message.received',
@@ -124,12 +127,58 @@ export function setupWebhookListener(
         payload.media = media;
       }
 
+      if (location) {
+        payload.location = location;
+      }
+
       // Fire all matching webhooks concurrently
       for (const webhook of matchingWebhooks) {
         fireWebhook(webhook.url, webhook.secret, payload, logger);
       }
     }
   });
+}
+
+/**
+ * Extract location details from a locationMessage or liveLocationMessage.
+ * Returns null if the message doesn't carry a location.
+ */
+function extractLocation(message: proto.IMessage): Record<string, unknown> | null {
+  const loc = message.locationMessage;
+  if (loc) {
+    return {
+      latitude: loc.degreesLatitude ?? null,
+      longitude: loc.degreesLongitude ?? null,
+      isLive: !!loc.isLive,
+      name: loc.name ?? null,
+      address: loc.address ?? null,
+      url: loc.url ?? null,
+      comment: loc.comment ?? null,
+      accuracyInMeters: loc.accuracyInMeters ?? null,
+      speedInMps: loc.speedInMps ?? null,
+      degreesClockwiseFromMagneticNorth: loc.degreesClockwiseFromMagneticNorth ?? null,
+      sequenceNumber: null,
+    };
+  }
+
+  const live = message.liveLocationMessage;
+  if (live) {
+    return {
+      latitude: live.degreesLatitude ?? null,
+      longitude: live.degreesLongitude ?? null,
+      isLive: true,
+      name: null,
+      address: null,
+      url: null,
+      comment: live.caption ?? null,
+      accuracyInMeters: live.accuracyInMeters ?? null,
+      speedInMps: live.speedInMps ?? null,
+      degreesClockwiseFromMagneticNorth: live.degreesClockwiseFromMagneticNorth ?? null,
+      sequenceNumber: live.sequenceNumber != null ? Number(live.sequenceNumber) : null,
+    };
+  }
+
+  return null;
 }
 
 async function resolveSenderPhone(

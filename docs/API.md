@@ -775,7 +775,7 @@ All errors return:
 
 ## Webhooks
 
-Register webhook URLs to get notified when a message is received from a specific phone number. Supports text messages and media (images, documents, audio, stickers).
+Register webhook URLs to get notified when a message is received from a specific phone number. Supports text messages, media (images, documents, audio, stickers), and shared locations.
 
 ### POST /api/webhooks
 
@@ -868,6 +868,49 @@ When a matching message arrives, WABridge sends a `POST` request to the webhook 
   }
 }
 ```
+
+**With a shared location:**
+
+When the sender shares a location pin (or starts sharing live location), the payload includes a `location` object:
+
+```json
+{
+  "event": "message.received",
+  "timestamp": "2025-01-15T10:30:00.000Z",
+  "from": "919812345678",
+  "messageId": "ABCDEF123456",
+  "text": null,
+  "hasMedia": false,
+  "rawType": "locationMessage",
+  "location": {
+    "latitude": 12.9716,
+    "longitude": 77.5946,
+    "isLive": false,
+    "name": "Cubbon Park",
+    "address": "Kasturba Road, Bengaluru, Karnataka",
+    "url": null,
+    "comment": null,
+    "accuracyInMeters": null,
+    "speedInMps": null,
+    "degreesClockwiseFromMagneticNorth": null,
+    "sequenceNumber": null
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `latitude` / `longitude` | Coordinates in decimal degrees |
+| `isLive` | `true` for live location shares |
+| `name` / `address` | Place name and address, when the sender picked a named place (otherwise `null`) |
+| `url` | Place URL, if WhatsApp attached one |
+| `comment` | Caption/comment added by the sender |
+| `accuracyInMeters`, `speedInMps`, `degreesClockwiseFromMagneticNorth` | Extra GPS details, mostly present for live locations |
+| `sequenceNumber` | Live location update sequence (live locations only) |
+
+`rawType` is `locationMessage` for a pinned location and `liveLocationMessage` for live location. To open the location in Google Maps: `https://maps.google.com/?q={latitude},{longitude}`.
+
+> **Note:** For live location, the webhook fires for the initial share. WhatsApp doesn't reliably forward the ongoing position updates to linked devices, so don't count on a continuous stream.
 
 ### Signature Verification
 
