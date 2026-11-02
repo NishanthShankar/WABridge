@@ -39,6 +39,16 @@ export interface ServerPlugin {
   };
 
   /**
+   * Optional public (unauthenticated) routes — mounted before the /api/* auth
+   * middleware. Used for endpoints that authorize via a single-use token in
+   * the URL (e.g., pairing tokens) instead of an API key header.
+   */
+  publicRoutes?: {
+    router: Hono;
+    basePath: string;
+  };
+
+  /**
    * Resolve AppContext for a BullMQ job.
    * Worker calls this per job to get the right db/broadcast/etc.
    * Returns null if the context can't be resolved (e.g., tenant deleted).
