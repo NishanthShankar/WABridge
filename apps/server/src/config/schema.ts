@@ -52,6 +52,12 @@ export const configSchema = z.object({
    * include such a URL will return null for the URL field.
    */
   public_base_url: z.string().url().optional(),
+  /**
+   * Multi-tenant only: what to do when a request to a tenant's subdomain carries no
+   * X-API-Key or another tenant's key. "warn" lets it through and logs a mismatch line;
+   * "enforce" rejects it with 401.
+   */
+  tenant_key_check: z.enum(['warn', 'enforce']).default('warn'),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;
