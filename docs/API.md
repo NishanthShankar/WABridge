@@ -912,6 +912,21 @@ When the sender shares a location pin (or starts sharing live location), the pay
 
 > **Note:** For live location, the webhook fires for the initial share. WhatsApp doesn't reliably forward the ongoing position updates to linked devices, so don't count on a continuous stream.
 
+### Reply Actions
+
+A webhook receiver can ask WABridge to act on the message it was just given, by answering `200` with `Content-Type: application/json` and a body like:
+
+```json
+{ "delete": true, "ephemeral": 86400 }
+```
+
+| Field | Meaning |
+|-------|---------|
+| `delete` | `true` removes the incoming message from this account's chat history on all its linked devices ("delete for me"). WhatsApp does not allow deleting someone else's message for everyone, so the sender keeps their copy. |
+| `ephemeral` | Sets the chat's disappearing-message timer, in seconds: `0` (off), `86400`, `604800` or `7776000`. With a timer set, later messages in the chat vanish from both sides when it runs out. |
+
+Both are optional. Any other body is ignored. `GET /api/health` lists `"webhook-reply-actions"` under `features` on servers that support this.
+
 ### Signature Verification
 
 If a `secret` is configured, WABridge includes an `X-Webhook-Signature` header containing an HMAC-SHA256 hex digest of the request body:

@@ -10,7 +10,8 @@ export function createHealthRouter() {
 
   router.get('/health', (c) => {
     const { getHealth } = getContext(c);
-    return c.json(getHealth());
+    // `features` lets a client check what this server can do before it relies on it.
+    return c.json({ ...getHealth(), features: ['webhook-reply-actions'] });
   });
 
   return router;

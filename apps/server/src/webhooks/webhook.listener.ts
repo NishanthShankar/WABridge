@@ -131,9 +131,12 @@ export function setupWebhookListener(
         payload.location = location;
       }
 
-      // Fire all matching webhooks concurrently
+      // Fire all matching webhooks concurrently. A receiver may answer with reply actions
+      // (delete this message from our side, set the chat's disappearing timer): see applyReplyActions.
       for (const webhook of matchingWebhooks) {
-        fireWebhook(webhook.url, webhook.secret, payload, logger);
+        fireWebhook(webhook.url, webhook.secret, payload, logger, (actions) =>
+          applyReplyActions(sock, msg, remoteJid, actions, logger),
+        );
       }
     }
   });
@@ -206,11 +209,62 @@ async function resolveSenderPhone(
   return remoteJid.replace('@lid', '');
 }
 
+/** What a webhook receiver may ask for in the JSON body of its 2xx answer. */
+export interface ReplyActions {
+  /** true: delete the incoming message from this account's own devices ("delete for me"). */
+  delete?: unknown;
+  /** Seconds for the chat's disappearing-message timer: 0 (off), 86400, 604800 or 7776000. */
+  ephemeral?: unknown;
+}
+
+/** The timers WhatsApp accepts for disappearing messages. */
+const EPHEMERAL_SECONDS = [0, 86_400, 604_800, 7_776_000];
+
+/**
+ * Carry out what the receiver asked for. Used by products that must not keep what people send
+ * them: the message is removed from this account's chat history on every linked device as soon
+ * as the receiver has read it. WhatsApp does not let an account delete someone else's message
+ * for everyone, so the sender's own copy stays until the chat's disappearing timer removes it.
+ * Message text is never logged.
+ */
+async function applyReplyActions(
+  sock: WASocket,
+  msg: proto.IWebMessageInfo,
+  remoteJid: string,
+  actions: ReplyActions,
+  logger: Logger,
+): Promise<void> {
+  if (actions.delete === true && msg.key?.id) {
+    try {
+      await sock.chatModify(
+        {
+          deleteForMe: {
+            key: { remoteJid, id: msg.key.id, fromMe: false },
+            timestamp: Number(msg.messageTimestamp ?? Math.floor(Date.now() / 1000)),
+            deleteMedia: true,
+          },
+        },
+        remoteJid,
+      );
+    } catch (err) {
+      logger.error({ err: (err as Error).message }, 'Could not delete the incoming message');
+    }
+  }
+  if (typeof actions.ephemeral === 'number' && EPHEMERAL_SECONDS.includes(actions.ephemeral)) {
+    try {
+      await sock.sendMessage(remoteJid, { disappearingMessagesInChat: actions.ephemeral });
+    } catch (err) {
+      logger.error({ err: (err as Error).message }, 'Could not set the disappearing timer');
+    }
+  }
+}
+
 function fireWebhook(
   url: string,
   secret: string | null,
   payload: object,
   logger: Logger,
+  onActions?: (actions: ReplyActions) => Promise<void>,
 ): void {
   const body = JSON.stringify(payload);
   const headers: Record<string, string> = {
@@ -223,10 +277,14 @@ function fireWebhook(
   }
 
   fetch(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(10_000) })
-    .then((res) => {
+    .then(async (res) => {
       if (!res.ok) {
         logger.warn({ url, status: res.status }, 'Webhook responded with error');
+        return;
       }
+      if (!onActions || !(res.headers.get('content-type') ?? '').includes('application/json')) return;
+      const actions = (await res.json().catch(() => null)) as ReplyActions | null;
+      if (actions && typeof actions === 'object') await onActions(actions);
     })
     .catch((err) => {
       logger.error({ url, err: (err as Error).message }, 'Webhook delivery failed');
