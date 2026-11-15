@@ -163,12 +163,15 @@ export class ConnectionManager {
         this.lastQrDataUrl = qrDataUrl;
         this.broadcast({ type: 'qr', data: qrDataUrl });
 
-        // Print QR to terminal for CLI-based pairing
-        const qrTerminal = await QRCode.toString(qr, {
-          type: 'terminal',
-          small: true,
-        });
-        console.log('\n' + qrTerminal);
+        // Terminal QR is opt-in (PRINT_QR=1). Under launchd stdout is a log file, and
+        // every unpaired tenant reprinting its QR on each refresh bloats it.
+        if (process.env.PRINT_QR === '1') {
+          const qrTerminal = await QRCode.toString(qr, {
+            type: 'terminal',
+            small: true,
+          });
+          console.log('\n' + qrTerminal);
+        }
       } catch (err) {
         this.logger.error({ err }, 'Failed to generate QR code');
       }
