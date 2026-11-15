@@ -77,6 +77,16 @@ export function createApp(plugin: ServerPlugin, messageQueue: Queue) {
     app.route(plugin.publicRoutes.basePath, plugin.publicRoutes.router);
   }
 
+  // Further plugin route groups, each behind its own auth middleware
+  for (const { router, basePath, middleware } of plugin.extraRoutes ?? []) {
+    if (middleware) {
+      app.use(basePath, middleware);
+      app.use(`${basePath}/*`, middleware);
+    }
+    // The router type is generic over its own variables; the app only needs to mount it.
+    app.route(basePath, router as Hono);
+  }
+
   // Apply plugin middleware to all API routes (sets AppContext per request)
   app.use('/api/*', plugin.apiMiddleware);
 

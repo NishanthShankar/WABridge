@@ -1088,3 +1088,85 @@ The group is created with this account as its only member, as `superadmin` (owne
 `{ "id", "inviteLink" }`. This account must be an admin of the group.
 
 `/api/health` lists `group-create` when these exist.
+
+## Multiuser tenants
+
+A tenant is either **single-user** (one WhatsApp number, everything above) or **multiuser**: one tenant with many users, each with their own WhatsApp number. Each user has their own API key, database, connection, webhooks, daily cap and group-creation cap, exactly as if they were separate tenants. Needs the multi-tenant plugin.
+
+### Keys
+
+| Key | Looks like | Held by | Can do |
+|---|---|---|---|
+| Admin key | `admin.api_key` | the server operator | create tenants, set a tenant's `mode` |
+| Tenant key | `sk_...` | the tenant's backend | manage its users at `/tenant/users`. **Cannot call `/api/*`.** |
+| User key | `uk_...` | whoever acts for that one user | everything under `/api/*`, for that user's number only |
+
+Rules a multiuser tenant always follows (`TENANT_KEY_CHECK` does not relax them):
+
+- `/api/*` and `/ws` only accept a user key. The key alone decides which number the request uses. No parameter, header or path can point a request at another user.
+- The subdomain alone grants nothing, and neither does the tenant key: `/api/*` with the tenant key is `403 multiuser_tenant`.
+- On `<tenant>.wabridge.co.in`, a user key must belong to a user of that tenant, and `/tenant/users` only accepts that tenant's key.
+- A user key is shown once, when the user is created or its key is rotated. Only its SHA-256 hash is stored, so it cannot be read back, by you or by anyone holding the database.
+- `GET /api/health` without a key returns just `{ "status": "ok", "mode": "multiuser" }`. With a user key it returns that user's health, as for a tenant.
+
+### Making a tenant multiuser (admin key)
+
+```bash
+# new tenant
+curl -X POST localhost:4000/admin/tenants -H "X-API-Key: $ADMIN_KEY" -H 'content-type: application/json' \
+  -d '{ "name": "acme", "mode": "multi" }'
+# existing tenant
+curl -X PATCH localhost:4000/admin/tenants/<tenantId> -H "X-API-Key: $ADMIN_KEY" -H 'content-type: application/json' \
+  -d '{ "mode": "multi" }'
+```
+
+Switching a tenant to `multi` takes its own number offline (its session is kept, and comes back if you switch to `single` again; the users then go offline instead). Limit the number of users with tenant config `{ "multiuser": { "max_users": 100 } }` (default 100).
+
+### Managing users (tenant key)
+
+All under `/tenant/users`, with `X-API-Key: sk_...`. A user id from another tenant is a `404`.
+
+| Method | Path | |
+|---|---|---|
+| `POST` | `/tenant/users` | Create a user. Body: `{ "externalId"?, "label"? }`. `externalId` is your own id for the user, unique per tenant. Response includes `apiKey` (`uk_...`) **once**. |
+| `GET` | `/tenant/users` | List users. `?externalId=` finds one. |
+| `GET` | `/tenant/users/:id` | One user. |
+| `PATCH` | `/tenant/users/:id` | `{ "label"?, "enabled"? }`. Disabling locks the key and takes the number offline; data is kept. |
+| `DELETE` | `/tenant/users/:id` | Disable. With `?purge=true`: unlink the device (only if the user is online at that moment) and delete the user, its key and all its data. Cannot be undone. |
+| `POST` | `/tenant/users/:id/rotate-key` | New key; the old one stops working at once. |
+| `POST` | `/tenant/users/:id/pairing-token` | `{ "ttlSeconds"? }` → `{ token, url, expiresAt }`. `GET url` shows this user's QR (see pairing tokens). The token only ever shows this user's QR. |
+| `POST` | `/tenant/users/:id/reconnect` | Drop the linked session and start pairing again. |
+
+A user looks like:
+
+```json
+{
+  "id": "0b1f...", "externalId": "acct_42", "label": "Asha", "enabled": true,
+  "keyPrefix": "uk_Ab3dE", "keyRotatedAt": null,
+  "status": "connected", "account": { "phoneNumber": "9198...", "name": "Asha" },
+  "createdAt": "...", "updatedAt": "..."
+}
+```
+
+`status` is `pairing`, `connecting`, `connected`, `disconnected`, `offline` or `disabled`. Errors: `409 external_id_taken`, `409 user_limit_reached` (also when re-enabling a user, and when disabled users pile up to twice the limit: purge them), `409 not_multiuser` (the key belongs to a single-user tenant).
+
+Rotating a key, disabling or purging a user also closes any WebSocket session open with the old key. Tenant names are unique: creating or renaming a tenant to a name in use is `409 name_taken`.
+
+### Acting as a user (user key)
+
+Use any endpoint in this document with the user's key:
+
+```bash
+curl -X POST https://acme.wabridge.co.in/api/webhooks -H "X-API-Key: $USER_KEY" -H 'content-type: application/json' \
+  -d '{ "url": "https://acme.example.com/wa-hook?user=acct_42", "secret": "...", "allEvents": true }'
+```
+
+Webhooks are per user: register one for each user (put your own user id in the URL, or use a secret per user, to tell them apart). The WebSocket takes the user key as `/ws?apiKey=uk_...` or an `X-API-Key` header.
+
+### Typical flow
+
+1. Admin: create the tenant with `"mode": "multi"`; give the `sk_` key to the tenant's backend.
+2. Backend: `POST /tenant/users` when one of its users wants to connect WhatsApp; store the returned `uk_` key (encrypted) against that user.
+3. Backend: `POST /tenant/users/:id/pairing-token`, show the QR from `url` to that user.
+4. Backend: register the user's webhook and call `/api/*` with that user's key.
+5. On offboarding: `DELETE /tenant/users/:id?purge=true`.

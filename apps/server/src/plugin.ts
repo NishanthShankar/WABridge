@@ -7,7 +7,8 @@ import type { AppContext } from './context.js';
  *
  * The server supports two modes via plugins:
  * - Single-tenant (built-in): one WhatsApp account, no auth
- * - Multi-tenant (optional @openwa/multi-tenant package): multiple accounts, API key auth
+ * - Multi-tenant (optional @openwa/multi-tenant package): multiple accounts, API key auth.
+ *   A tenant there is single-user (one number) or multiuser (one number per user).
  *
  * Both modes implement this interface. The server boot sequence doesn't know
  * which mode it's in — it just calls plugin methods uniformly.
@@ -47,6 +48,17 @@ export interface ServerPlugin {
     router: Hono;
     basePath: string;
   };
+
+  /**
+   * Optional further route groups with their own auth, mounted before the /api/* auth
+   * middleware (e.g. /tenant/users in multi-tenant mode, where a multiuser tenant manages
+   * its users with the tenant key).
+   */
+  extraRoutes?: Array<{
+    router: Hono;
+    basePath: string;
+    middleware?: MiddlewareHandler;
+  }>;
 
   /**
    * Resolve AppContext for a BullMQ job.
