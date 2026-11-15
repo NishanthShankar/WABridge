@@ -980,3 +980,65 @@ GET /api/messages/recurring?offset=0&limit=50
 ```
 
 Response includes `total` for calculating pages client-side.
+
+---
+
+## Reply lane
+
+### POST /api/reply
+
+Answer a chat that wrote to this account in the last 24 hours. Sends at once: no queue, no random delay, and it does **not** count toward `rate_limit.daily_cap`. A chat that has not written in 24 hours gets `409 outside_reply_window`; send to it with `POST /api/messages` instead (queued and capped). At most 12 answers per chat per minute (`429 too_many_replies`). Answers are not stored and their text is never logged.
+
+| Field | Type | Notes |
+|---|---|---|
+| `chatId` or `phone` | string | Exactly one. `chatId` is the webhook's `chatId` (works for groups and LID senders). |
+| `text` | string | Up to 4096 characters. |
+| `quote` | `{messageId, fromMe?, participant?, text?}` | Show the answer as a reply to that message. In groups `participant` is who wrote it. |
+| `mentions` | string[] | Phones or JIDs to @mention. Put `@<number>` in `text` where each should show. |
+| `reaction` | `{messageId, emoji, fromMe?, participant?}` | React to a message. `emoji: ""` removes the reaction. |
+| `typing` | boolean | Show "typing…" briefly before the text. Default `true`. |
+
+Give `text`, `reaction` or both.
+
+```bash
+curl -X POST https://<tenant>.wabridge.co.in/api/reply \
+  -H "X-API-Key: sk_..." -H "Content-Type: application/json" \
+  -d '{"chatId":"919812345678@s.whatsapp.net","text":"Added: buy milk","quote":{"messageId":"3EB0...","text":"buy milk"}}'
+```
+
+Response: `{ "messageId": "3EB0...", "reactionId": null, "chatId": "919812345678@s.whatsapp.net" }`. Keep `messageId`: when the person later replies to this message, the webhook's `quoted.messageId` is this value.
+
+### GET /api/groups/:id/participants
+
+Live member list from WhatsApp: `{ id, name, participants: [{ jid, phone, lid, admin, isMe }] }`. `phone` is null when a member hides their number and the LID can't be mapped.
+
+## Webhook events (allEvents)
+
+Create a catch-all webhook (no `phone`) with `"allEvents": true` to also receive group messages and the events below. Webhooks without it get only 1:1 `message.received`, as before.
+
+Every `message.received` now also carries:
+
+```json
+{
+  "chatId": "120363012345678@g.us",
+  "isGroup": true,
+  "group": { "id": "120363012345678@g.us", "name": "Flat 4B" },
+  "pushName": "Asha",
+  "isVoiceNote": false,
+  "mentions": [{ "jid": "2384756@lid", "phone": "919812345678", "isMe": true }],
+  "botMentioned": true,
+  "quoted": { "messageId": "3EB0...", "fromMe": true, "participant": "919000000000", "text": "Added: buy milk" }
+}
+```
+
+In a group, `from` is the member who wrote. `quoted` is null unless the message replies to another.
+
+Other events (allEvents only): `message.reaction` (`messageId`, `targetMessageId`, `targetFromMe`, `emoji`, null when removed), `message.edited` (`messageId` of the edited message, new `text`), `message.deleted` (`messageId`), `group.joined` (this account was added to a group), `group.participants` (`action`: add, remove, promote, demote, modify; `participants: [{jid, phone, isMe}]`, `author`). Non-message events carry an `eventId` to de-duplicate on.
+
+### Delivery and retries
+
+A delivery that fails (network error, timeout, 429 or 5xx) is retried after 2 s and again after 10 s with the same body and signature. `X-Webhook-Attempt` counts from 1. Receivers must de-duplicate on `messageId` / `eventId`.
+
+### Reply actions
+
+Besides `delete` and `ephemeral`, a receiver's JSON answer may contain `"read": true` to mark the incoming message read (blue ticks).

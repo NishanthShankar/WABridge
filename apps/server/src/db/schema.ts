@@ -177,6 +177,8 @@ export const webhooks = sqliteTable('webhooks', {
   url: text('url').notNull(),                    // URL to POST to
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   secret: text('secret'),                        // Optional HMAC secret for signature verification
+  /** Opt-in: also deliver group messages and non-message events (reactions, edits, deletes, group membership). */
+  allEvents: integer('all_events', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -186,6 +188,16 @@ export const webhooks = sqliteTable('webhooks', {
 }, (table) => [
   index('webhooks_phone_idx').on(table.phone),
 ]);
+
+/**
+ * When each chat last wrote to this account. Gates POST /api/reply: answers inside the 24 hour
+ * window after someone wrote skip the queue and the daily cap. One row per chat JID; a 1:1 chat
+ * with a LID sender gets a row for the LID JID and one for the phone JID when it resolves.
+ */
+export const chatActivity = sqliteTable('chat_activity', {
+  jid: text('jid').primaryKey(),
+  lastInboundAt: integer('last_inbound_at', { mode: 'timestamp_ms' }).notNull(),
+});
 
 // ─── Drizzle Relations (for relational query API) ────────────────────────────
 

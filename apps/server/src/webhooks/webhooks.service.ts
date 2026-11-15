@@ -6,11 +6,17 @@ type Database = ReturnType<typeof createDatabase>;
 
 export function createWebhooksService(db: Database) {
   return {
-    create(data: { phone?: string; url: string; secret?: string }) {
+    create(data: { phone?: string; url: string; secret?: string; allEvents?: boolean }) {
       const id = crypto.randomUUID();
       const webhook = db
         .insert(webhooks)
-        .values({ id, phone: data.phone ?? null, url: data.url, secret: data.secret ?? null })
+        .values({
+          id,
+          phone: data.phone ?? null,
+          url: data.url,
+          secret: data.secret ?? null,
+          allEvents: data.allEvents ?? false,
+        })
         .returning()
         .get();
       return webhook;
@@ -34,7 +40,20 @@ export function createWebhooksService(db: Database) {
         .filter((w) => w.enabled);
     },
 
-    update(id: string, data: { phone?: string; url?: string; enabled?: boolean; secret?: string | null }) {
+    /** Enabled catch-all webhooks that opted in to group messages and other events. */
+    getAllEvents() {
+      return db
+        .select()
+        .from(webhooks)
+        .where(isNull(webhooks.phone))
+        .all()
+        .filter((w) => w.enabled && w.allEvents);
+    },
+
+    update(
+      id: string,
+      data: { phone?: string; url?: string; enabled?: boolean; secret?: string | null; allEvents?: boolean },
+    ) {
       const webhook = db
         .update(webhooks)
         .set({ ...data, updatedAt: new Date() })
