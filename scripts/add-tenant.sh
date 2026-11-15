@@ -4,7 +4,13 @@ set -euo pipefail
 DOMAIN="wabridge.co.in"
 TUNNEL_NAME="wabridge"
 SERVER="http://localhost:4000"
-CLOUDFLARED_CONFIG="$HOME/.cloudflared/config.yml"
+# The wabridge tunnel has its own config and launchd job; ~/.cloudflared/config.yml
+# belongs to a different tunnel and must not be touched from here.
+CLOUDFLARED_CONFIG="$HOME/.cloudflared/wabridge.yml"
+TUNNEL_SERVICE="com.cloudflare.tunnel"
+# Origin cert scoped to the ${DOMAIN} zone. The default ~/.cloudflared/cert.pem is
+# scoped to another zone, so "route dns" with it would create the record there.
+CLOUDFLARED_CERT="${CLOUDFLARED_CERT:-$HOME/.cloudflared/cert-wabridge.pem}"
 CONFIG_FILE="$(cd "$(dirname "$0")/.." && pwd)/config.yaml"
 
 # Resolve admin API key from config.yaml (or ADMIN_KEY env var override)
@@ -52,9 +58,16 @@ echo "    Tenant created in WABridge"
 
 # 2. Add DNS route via cloudflared
 echo "==> Adding DNS route: ${HOSTNAME}"
-cloudflared tunnel route dns "${TUNNEL_NAME}" "${HOSTNAME}" 2>&1 || true
+DNS_DONE=0
+if [ -f "${CLOUDFLARED_CERT}" ]; then
+  if cloudflared tunnel --origincert "${CLOUDFLARED_CERT}" route dns "${TUNNEL_NAME}" "${HOSTNAME}" 2>&1; then
+    DNS_DONE=1
+  fi
+else
+  echo "    SKIPPED: no ${DOMAIN} origin cert at ${CLOUDFLARED_CERT}"
+fi
 
-# 3. Add to cloudflared config.yml (before the catch-all rule)
+# 3. Add to the wabridge cloudflared config (before the catch-all rule)
 if grep -q "hostname: ${HOSTNAME}" "${CLOUDFLARED_CONFIG}" 2>/dev/null; then
   echo "    Already in ${CLOUDFLARED_CONFIG}, skipping"
 else
@@ -69,12 +82,12 @@ fi
 
 # 4. Restart cloudflared
 echo "==> Restarting cloudflared"
-killall cloudflared 2>/dev/null || true
-sleep 1
-nohup cloudflared tunnel run "${TUNNEL_NAME}" >/dev/null 2>&1 &
-sleep 2
+cloudflared tunnel --config "${CLOUDFLARED_CONFIG}" ingress validate >/dev/null
+# Restart only the wabridge tunnel's launchd job; other tunnels keep running.
+launchctl kickstart -k "gui/$(id -u)/${TUNNEL_SERVICE}"
+sleep 3
 
-if pgrep -q cloudflared; then
+if pgrep -qf "cloudflared.*${CLOUDFLARED_CONFIG}"; then
   echo "    cloudflared restarted"
 else
   echo "    WARNING: cloudflared may not have started, check manually"
@@ -90,3 +103,9 @@ echo "  ID:       ${TENANT_ID}"
 echo "  API Key:  ${API_KEY}"
 echo "  URL:      https://${HOSTNAME}"
 echo "========================================"
+if [ "${DNS_DONE}" != "1" ]; then
+  TUNNEL_ID=$(awk '/^tunnel:/ {print $2; exit}' "${CLOUDFLARED_CONFIG}")
+  echo ""
+  echo "  DNS NOT CREATED. Add this record in the ${DOMAIN} zone (Cloudflare dashboard):"
+  echo "    CNAME  ${TENANT}  ->  ${TUNNEL_ID}.cfargotunnel.com  (Proxied)"
+fi
