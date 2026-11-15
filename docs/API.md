@@ -1069,6 +1069,16 @@ Response `201`:
 
 `invite_needed` means the person's privacy settings don't let this account add them; send them `inviteLink` instead. `invalid` means the input wasn't a phone or JID.
 
+#### A group with only this account in it
+
+You can create a group whose only member is this account itself, for example as a private test group or to add people later by invite link. `participants` must have at least one entry, so pass this account's own number:
+
+```json
+{ "name": "Test group", "participants": ["919800000008"] }
+```
+
+The group is created with this account as its only member, as `superadmin` (owner). That entry is reported as `"status": "added"` in the response, even though this account is the creator rather than an added member. It still counts toward `groups.create_daily_cap`. Add people afterwards with `POST /api/groups/:id/participants` or share `inviteLink`.
+
 ### POST /api/groups/:id/participants
 
 `{ "add": [...], "remove": [...], "promote": [...], "demote": [...] }` (any of them). Returns the same `participants` shape (`added`, `removed`, `promoted`, `demoted`, `invite_needed`, `invalid`, `failed`) and `inviteLink` when someone needs an invite.
