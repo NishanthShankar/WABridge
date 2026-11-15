@@ -5,13 +5,24 @@ import { getContext } from '../context.js';
  * Create the health API router.
  * GET /api/health returns JSON health status.
  */
+/** What this server can do. Clients check this before relying on a feature. */
+export const FEATURES = [
+  'webhook-reply-actions',
+  'webhook-read-action',
+  'webhook-all-events', // allEvents: group messages, reactions, edits, deletes, group membership
+  'webhook-quoted-mentions', // quoted, mentions, botMentioned, isVoiceNote, chatId in message.received
+  'webhook-retry',
+  'reply-lane', // POST /api/reply
+  'group-participants', // GET /api/groups/:id/participants
+];
+
 export function createHealthRouter() {
   const router = new Hono();
 
   router.get('/health', (c) => {
     const { getHealth } = getContext(c);
     // `features` lets a client check what this server can do before it relies on it.
-    return c.json({ ...getHealth(), features: ['webhook-reply-actions'] });
+    return c.json({ ...getHealth(), features: FEATURES });
   });
 
   return router;

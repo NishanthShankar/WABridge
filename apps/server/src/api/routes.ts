@@ -16,6 +16,7 @@ import { createSchedulingRouter } from '../scheduling/scheduling.router.js';
 import { createGroupsRouter } from '../groups/groups.router.js';
 import { createRateLimitRouter } from '../rate-limit/rate-limit.router.js';
 import { createWebhooksRouter } from '../webhooks/webhooks.router.js';
+import { createReplyRouter } from '../reply/reply.router.js';
 
 /** Relative path from CWD (apps/server/) to the web build output */
 const WEB_DIST = '../web/dist';
@@ -111,6 +112,9 @@ export function createApp(plugin: ServerPlugin, messageQueue: Queue) {
 
   // Webhooks API
   app.route('/api/webhooks', createWebhooksRouter());
+
+  // Reply API: uncapped answers inside the 24 hour window after a chat wrote
+  app.route('/api/reply', createReplyRouter());
 
   // Test send endpoint (development only)
   app.post('/api/test-send', async (c) => {
