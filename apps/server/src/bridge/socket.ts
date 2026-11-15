@@ -36,6 +36,10 @@ export type BroadcastFn = (message: object) => void;
 export class ConnectionManager {
   private sock: ReturnType<typeof makeWASocket> | null = null;
   private reconnectAttempt = 0;
+  /** Set by destroy(). A destroyed manager never opens a socket again. */
+  private destroyed = false;
+  /** Bumped by every connect(); an older connect() that is still awaiting gives up. */
+  private connectGeneration = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private connectedAt: Date | null = null;
   private lastDisconnect: {
@@ -113,6 +117,12 @@ export class ConnectionManager {
    * On subsequent runs, restores session from encrypted SQLite.
    */
   async connect(): Promise<void> {
+    if (this.destroyed) return;
+    const generation = ++this.connectGeneration;
+    // destroy() or a newer connect() may run while this one awaits below. Without this
+    // check the socket would be created anyway, on a manager nobody tracks any more.
+    const superseded = () => this.destroyed || generation !== this.connectGeneration;
+
     // Clean up any existing socket before creating a new one
     this.cleanupSocket();
 
@@ -120,24 +130,34 @@ export class ConnectionManager {
       this.db,
       this.masterKey,
     );
+    if (superseded()) return;
 
     // Fetch latest WA Web version to avoid 405 disconnects from expired versions
     const { version } = await fetchLatestBaileysVersion();
+    if (superseded()) return;
     this.logger.info({ version }, 'Using WA Web version');
 
-    this.sock = makeWASocket({
+    const sock = makeWASocket({
       auth: state,
       version,
       // NOTE: printQRInTerminal is deprecated in Baileys v7 -- we handle QR display ourselves
       browser: [this.config.whatsapp.browser_name, 'Chrome', '22.0.0'],
       markOnlineOnConnect: this.config.whatsapp.mark_online,
     });
+    this.sock = sock;
 
-    this.sock.ev.on('creds.update', saveCreds);
+    // A failed save must not become an unhandled rejection, which would end the process.
+    sock.ev.on('creds.update', (...args: Parameters<typeof saveCreds>) => {
+      Promise.resolve(saveCreds(...args)).catch((err) => {
+        this.logger.error({ err }, 'Failed to save credentials');
+      });
+    });
 
-    this.sock.ev.on(
+    sock.ev.on(
       'connection.update',
       (update: Partial<ConnectionState>) => {
+        // Ignore events from a socket this manager has already replaced or dropped.
+        if (this.destroyed || this.sock !== sock) return;
         this.handleConnectionUpdate(update);
       },
     );
@@ -160,6 +180,7 @@ export class ConnectionManager {
       try {
         // Generate QR for web page (data URL) and broadcast to WebSocket clients
         const qrDataUrl = await QRCode.toDataURL(qr);
+        if (this.destroyed) return;
         this.lastQrDataUrl = qrDataUrl;
         this.broadcast({ type: 'qr', data: qrDataUrl });
 
@@ -249,6 +270,7 @@ export class ConnectionManager {
    * Each DisconnectReason gets explicit handling with a default fallback.
    */
   private handleDisconnect(statusCode: number): void {
+    if (this.destroyed) return;
     switch (statusCode) {
       // Permanent: user unlinked device from phone
       case DisconnectReason.loggedOut: // 401
@@ -301,6 +323,7 @@ export class ConnectionManager {
    * Gives up after 30 minutes (configurable) and resets to pairing mode.
    */
   private reconnectWithBackoff(): void {
+    if (this.destroyed) return;
     if (this.retryStartedAt === null) {
       this.retryStartedAt = new Date();
     }
@@ -339,6 +362,7 @@ export class ConnectionManager {
    * Schedule a reconnect after a delay.
    */
   private scheduleReconnect(delayMs: number): void {
+    if (this.destroyed) return;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
     }
@@ -355,6 +379,7 @@ export class ConnectionManager {
    * Reset to pairing mode for a fresh QR code.
    */
   private resetToPairing(): void {
+    if (this.destroyed) return;
     this.reconnectAttempt = 0;
     this.retryStartedAt = null;
     this.status = 'pairing';
@@ -424,6 +449,7 @@ export class ConnectionManager {
    * Used by admin API when a tenant is stuck in a reconnect loop.
    */
   async forceResetToPairing(): Promise<void> {
+    if (this.destroyed) return;
     this.cleanupSocket();
     this.clearAuthState();
     this.reconnectAttempt = 0;
@@ -442,6 +468,7 @@ export class ConnectionManager {
    * Graceful shutdown: close socket and clear timers.
    */
   destroy(): void {
+    this.destroyed = true;
     this.cleanupSocket();
     this.logger.info('ConnectionManager destroyed');
   }

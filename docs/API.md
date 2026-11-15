@@ -1132,7 +1132,7 @@ All under `/tenant/users`, with `X-API-Key: sk_...`. A user id from another tena
 | `GET` | `/tenant/users` | List users. `?externalId=` finds one. |
 | `GET` | `/tenant/users/:id` | One user. |
 | `PATCH` | `/tenant/users/:id` | `{ "label"?, "enabled"? }`. Disabling locks the key and takes the number offline; data is kept. |
-| `DELETE` | `/tenant/users/:id` | Disable. With `?purge=true`: unlink the device and delete the user, its key and all its data. Cannot be undone. |
+| `DELETE` | `/tenant/users/:id` | Disable. With `?purge=true`: unlink the device (only if the user is online at that moment) and delete the user, its key and all its data. Cannot be undone. |
 | `POST` | `/tenant/users/:id/rotate-key` | New key; the old one stops working at once. |
 | `POST` | `/tenant/users/:id/pairing-token` | `{ "ttlSeconds"? }` → `{ token, url, expiresAt }`. `GET url` shows this user's QR (see pairing tokens). The token only ever shows this user's QR. |
 | `POST` | `/tenant/users/:id/reconnect` | Drop the linked session and start pairing again. |
@@ -1148,7 +1148,9 @@ A user looks like:
 }
 ```
 
-`status` is `pairing`, `connected`, `disconnected`, `offline` or `disabled`. Errors: `409 external_id_taken`, `409 user_limit_reached`, `409 not_multiuser` (the key belongs to a single-user tenant).
+`status` is `pairing`, `connecting`, `connected`, `disconnected`, `offline` or `disabled`. Errors: `409 external_id_taken`, `409 user_limit_reached` (also when re-enabling a user, and when disabled users pile up to twice the limit: purge them), `409 not_multiuser` (the key belongs to a single-user tenant).
+
+Rotating a key, disabling or purging a user also closes any WebSocket session open with the old key. Tenant names are unique: creating or renaming a tenant to a name in use is `409 name_taken`.
 
 ### Acting as a user (user key)
 
