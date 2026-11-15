@@ -27,6 +27,12 @@ export const configSchema = z.object({
       warn_threshold_pct: z.number().min(0).max(100).default(80),
     })
     .default({}),
+  groups: z
+    .object({
+      /** Groups this account may create per day (IST). Creating groups fast is a ban signal. */
+      create_daily_cap: z.number().min(0).default(5),
+    })
+    .default({}),
   scheduling: z
     .object({
       default_send_hour: z.number().min(0).max(23).default(9),

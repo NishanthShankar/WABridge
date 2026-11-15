@@ -14,6 +14,7 @@ export const FEATURES = [
   'webhook-retry',
   'reply-lane', // POST /api/reply
   'group-participants', // GET /api/groups/:id/participants
+  'group-create', // POST /api/groups, POST /api/groups/:id/participants, GET /api/groups/:id/invite
 ];
 
 export function createHealthRouter() {

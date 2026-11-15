@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
-import { listGroupsSchema } from './groups.schema.js';
+import { createGroupSchema, listGroupsSchema, updateParticipantsSchema } from './groups.schema.js';
+import { createGroup, GroupCapError, inviteLink, updateParticipants } from './group-admin.js';
 import { createGroupsService } from './groups.service.js';
 import { getContext } from '../context.js';
 import { jidToPhone, ownJids } from '../webhooks/jid.js';
@@ -13,6 +14,9 @@ import { jidToPhone, ownJids } from '../webhooks/jid.js';
  * - GET /       — List groups (query: search, limit, offset)
  * - GET /:id    — Get single group by JID
  * - GET /:id/participants — Live member list from WhatsApp (phone, LID, admin)
+ * - POST /       — Create a group (capped per day: groups.create_daily_cap)
+ * - POST /:id/participants — Add, remove, promote or demote members
+ * - GET /:id/invite — The group's invite link (this account must be admin)
  */
 export function createGroupsRouter() {
   const router = new Hono();
@@ -21,6 +25,47 @@ export function createGroupsRouter() {
     const ctx = getContext(c);
     return createGroupsService(ctx.db, ctx.getSocket);
   }
+
+  // CREATE a group (this account becomes admin)
+  router.post('/', zValidator('json', createGroupSchema), async (c) => {
+    const { db, getSocket, config } = getContext(c);
+    const sock = getSocket();
+    if (!sock) return c.json({ error: 'WhatsApp not connected' }, 503);
+    try {
+      const result = await createGroup(db, sock, config.groups.create_daily_cap, c.req.valid('json'));
+      return c.json(result, 201);
+    } catch (err) {
+      const e = err as Error & { statusCode?: number };
+      if (err instanceof GroupCapError) return c.json({ error: 'group_cap_reached', message: e.message }, 429);
+      return c.json({ error: e.message }, (e.statusCode as 400) ?? 502);
+    }
+  });
+
+  // ADD / REMOVE / PROMOTE / DEMOTE members
+  router.post('/:id/participants', zValidator('json', updateParticipantsSchema), async (c) => {
+    const { getSocket } = getContext(c);
+    const sock = getSocket();
+    if (!sock) return c.json({ error: 'WhatsApp not connected' }, 503);
+    const id = c.req.param('id');
+    if (!id.endsWith('@g.us')) return c.json({ error: 'Not a group JID' }, 400);
+    try {
+      return c.json(await updateParticipants(sock, id, c.req.valid('json')));
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 502);
+    }
+  });
+
+  // INVITE link
+  router.get('/:id/invite', async (c) => {
+    const { getSocket } = getContext(c);
+    const sock = getSocket();
+    if (!sock) return c.json({ error: 'WhatsApp not connected' }, 503);
+    const id = c.req.param('id');
+    if (!id.endsWith('@g.us')) return c.json({ error: 'Not a group JID' }, 400);
+    const link = await inviteLink(sock, id);
+    if (!link) return c.json({ error: 'Could not get the invite link (is this account an admin?)' }, 502);
+    return c.json({ id, inviteLink: link });
+  });
 
   // SYNC groups from WhatsApp
   router.post('/sync', async (c) => {
