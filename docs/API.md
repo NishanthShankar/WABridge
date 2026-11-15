@@ -1042,3 +1042,39 @@ A delivery that fails (network error, timeout, 429 or 5xx) is retried after 2 s 
 ### Reply actions
 
 Besides `delete` and `ephemeral`, a receiver's JSON answer may contain `"read": true` to mark the incoming message read (blue ticks).
+
+## Creating and managing groups
+
+### POST /api/groups
+
+Create a group from this account, which becomes its admin. Capped per day (IST) by `groups.create_daily_cap` (default 5); over the cap you get `429 group_cap_reached`. Creating many groups quickly is a strong ban signal.
+
+```json
+{ "name": "Flat 4B", "participants": ["+91 98123 45678", "919988776655"], "description": "optional" }
+```
+
+Response `201`:
+
+```json
+{
+  "id": "120363...@g.us",
+  "name": "Flat 4B",
+  "participants": [
+    { "input": "+91 98123 45678", "jid": "919812345678@s.whatsapp.net", "phone": "919812345678", "status": "added" },
+    { "input": "919988776655", "jid": "919988776655@s.whatsapp.net", "phone": "919988776655", "status": "invite_needed" }
+  ],
+  "inviteLink": "https://chat.whatsapp.com/..."
+}
+```
+
+`invite_needed` means the person's privacy settings don't let this account add them; send them `inviteLink` instead. `invalid` means the input wasn't a phone or JID.
+
+### POST /api/groups/:id/participants
+
+`{ "add": [...], "remove": [...], "promote": [...], "demote": [...] }` (any of them). Returns the same `participants` shape (`added`, `removed`, `promoted`, `demoted`, `invite_needed`, `invalid`, `failed`) and `inviteLink` when someone needs an invite.
+
+### GET /api/groups/:id/invite
+
+`{ "id", "inviteLink" }`. This account must be an admin of the group.
+
+`/api/health` lists `group-create` when these exist.
