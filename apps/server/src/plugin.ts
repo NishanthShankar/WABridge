@@ -87,4 +87,6 @@ export type PluginFactory = (params: {
   logger: import('pino').Logger;
   migrationsDir: string;
   encryptionKey: string;
+  /** Loaded extensions: call attachExtensions() on every connection (see extensions.ts). */
+  extensions: import('./extensions.js').Extension[];
 }) => Promise<ServerPlugin>;

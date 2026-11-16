@@ -240,6 +240,23 @@ volumes:
 
 > Run the server once locally first to generate `config.yaml`, then copy it to your Docker host.
 
+## Extensions
+
+Optional packages can add API routes and WhatsApp event listeners without changing the server. Install the package where the server can import it, then list it in `config.yaml` with its options:
+
+```yaml
+extensions:
+  "@acme/wabridge-extra":
+    some_option: 1
+```
+
+The package's default export is an `ExtensionFactory` (see `apps/server/src/extensions.ts`) returning:
+
+- `routes`: Hono routers mounted under `/api/<basePath>`, behind the normal API key auth. Use `getContext(c)` from `@openwa/server/context` to reach the account's database and socket.
+- `onConnected(sock, ctx)`: called after every WhatsApp connection of every account, with that account's `db`, `config`, `logger` and the extension's `options`.
+
+A listed package that fails to load is logged and skipped. Extensions keep their own tables (e.g. `CREATE TABLE IF NOT EXISTS` on first use) rather than adding server migrations.
+
 ## Exposing Publicly (Cloudflare Tunnel)
 
 To access WABridge from the internet (e.g., from a home server or Mac Mini), use [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/). It's free and requires no port forwarding.

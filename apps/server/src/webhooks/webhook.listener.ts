@@ -494,7 +494,7 @@ const RETRY_DELAYS_MS = [2_000, 10_000];
  * webhook has a secret. Network errors, timeouts, 429 and 5xx are retried with the same body,
  * so receivers must de-duplicate on messageId / eventId. X-Webhook-Attempt counts from 1.
  */
-function fireWebhook(
+export function fireWebhook(
   webhook: Pick<Webhook, 'url' | 'secret'>,
   payload: object,
   logger: Logger,

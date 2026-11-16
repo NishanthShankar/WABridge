@@ -53,6 +53,13 @@ export const configSchema = z.object({
     })
     .optional(),
   /**
+   * Optional extension packages to load, each with its own options:
+   *   extensions:
+   *     "@acme/wabridge-extra": { some_option: 1 }
+   * See src/extensions.ts.
+   */
+  extensions: z.record(z.record(z.unknown())).default({}),
+  /**
    * Public base URL used when building shareable URLs (e.g. pairing tokens).
    * Example: "https://wabridge.co.in". If unset, admin endpoints that would
    * include such a URL will return null for the URL field.
