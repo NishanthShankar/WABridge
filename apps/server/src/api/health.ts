@@ -15,6 +15,7 @@ export const FEATURES = [
   'reply-lane', // POST /api/reply
   'group-participants', // GET /api/groups/:id/participants
   'group-create', // POST /api/groups, POST /api/groups/:id/participants, GET /api/groups/:id/invite
+  'group-settings', // GET/PATCH /api/groups/:id/settings, settings on POST /api/groups
 ];
 
 export function createHealthRouter() {

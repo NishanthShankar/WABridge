@@ -4,6 +4,7 @@ import type { ParticipantAction } from '@whiskeysockets/baileys';
 import { groups, sessionMeta } from '../db/schema.js';
 import type { createDatabase } from '../db/client.js';
 import { jidToPhone, toJid } from '../webhooks/jid.js';
+import type { GroupSettingsInput } from './groups.schema.js';
 
 type Database = ReturnType<typeof createDatabase>;
 type WASocket = ReturnType<typeof makeWASocket>;
@@ -64,7 +65,7 @@ export async function createGroup(
   db: Database,
   sock: WASocket,
   cap: number,
-  input: { name: string; participants: string[]; description?: string },
+  input: { name: string; participants: string[]; description?: string; settings?: GroupSettingsInput },
 ) {
   const { key, count } = createdToday(db);
   if (count >= cap) throw new GroupCapError(`Daily group creation cap reached (${count}/${cap})`);
@@ -105,12 +106,61 @@ export async function createGroup(
     .onConflictDoNothing()
     .run();
 
+  // Permissions are applied after creating: a failure here doesn't undo the group, it's reported.
+  const settings = input.settings ? await applyGroupSettings(sock, meta.id, input.settings) : null;
+
   return {
     id: meta.id,
     name: meta.subject ?? input.name,
     participants,
     inviteLink: await inviteLink(sock, meta.id),
+    ...(settings ? { settings } : {}),
   };
+}
+
+export interface GroupSettings {
+  /** false: only admins can add members */
+  membersCanAdd: boolean;
+  /** false: only admins can change the group name, photo and description */
+  membersCanEditInfo: boolean;
+  /** true: only admins can send messages */
+  adminsOnlyMessages: boolean;
+}
+
+/** The group's current permissions, as WhatsApp reports them. */
+export async function readGroupSettings(sock: WASocket, jid: string): Promise<GroupSettings> {
+  const meta = await sock.groupMetadata(jid);
+  return {
+    membersCanAdd: !!meta.memberAddMode,
+    membersCanEditInfo: !meta.restrict,
+    adminsOnlyMessages: !!meta.announce,
+  };
+}
+
+/**
+ * Change the given permissions; each one left out stays as it is. Every change is tried, and
+ * the ones WhatsApp refused (usually: this account isn't an admin) come back in failed.
+ */
+export async function applyGroupSettings(sock: WASocket, jid: string, wanted: GroupSettingsInput) {
+  const steps: Array<[keyof GroupSettings, () => Promise<void>]> = [];
+  if (wanted.membersCanAdd !== undefined)
+    steps.push(['membersCanAdd', () => sock.groupMemberAddMode(jid, wanted.membersCanAdd ? 'all_member_add' : 'admin_add')]);
+  if (wanted.membersCanEditInfo !== undefined)
+    steps.push(['membersCanEditInfo', () => sock.groupSettingUpdate(jid, wanted.membersCanEditInfo ? 'unlocked' : 'locked')]);
+  if (wanted.adminsOnlyMessages !== undefined)
+    steps.push(['adminsOnlyMessages', () => sock.groupSettingUpdate(jid, wanted.adminsOnlyMessages ? 'announcement' : 'not_announcement')]);
+
+  const applied: Array<keyof GroupSettings> = [];
+  const failed: Array<{ setting: keyof GroupSettings; error: string }> = [];
+  for (const [setting, run] of steps) {
+    try {
+      await run();
+      applied.push(setting);
+    } catch (err) {
+      failed.push({ setting, error: (err as Error).message });
+    }
+  }
+  return { applied, failed };
 }
 
 export async function updateParticipants(

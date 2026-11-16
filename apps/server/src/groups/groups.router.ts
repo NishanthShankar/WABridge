@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
-import { createGroupSchema, listGroupsSchema, updateParticipantsSchema } from './groups.schema.js';
-import { createGroup, GroupCapError, inviteLink, updateParticipants } from './group-admin.js';
+import { createGroupSchema, groupSettingsSchema, listGroupsSchema, updateParticipantsSchema } from './groups.schema.js';
+import { applyGroupSettings, createGroup, GroupCapError, inviteLink, readGroupSettings, updateParticipants } from './group-admin.js';
 import { createGroupsService } from './groups.service.js';
 import { getContext } from '../context.js';
 import { jidToPhone, ownJids } from '../webhooks/jid.js';
@@ -17,6 +17,8 @@ import { jidToPhone, ownJids } from '../webhooks/jid.js';
  * - POST /       — Create a group (capped per day: groups.create_daily_cap)
  * - POST /:id/participants — Add, remove, promote or demote members
  * - GET /:id/invite — The group's invite link (this account must be admin)
+ * - GET /:id/settings — Who can add members, edit group info, send messages
+ * - PATCH /:id/settings — Change those (this account must be admin)
  */
 export function createGroupsRouter() {
   const router = new Hono();
@@ -53,6 +55,34 @@ export function createGroupsRouter() {
     } catch (err) {
       return c.json({ error: (err as Error).message }, 502);
     }
+  });
+
+  // SETTINGS: read
+  router.get('/:id/settings', async (c) => {
+    const { getSocket } = getContext(c);
+    const sock = getSocket();
+    if (!sock) return c.json({ error: 'WhatsApp not connected' }, 503);
+    const id = c.req.param('id');
+    if (!id.endsWith('@g.us')) return c.json({ error: 'Not a group JID' }, 400);
+    try {
+      return c.json({ id, settings: await readGroupSettings(sock, id) });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 502);
+    }
+  });
+
+  // SETTINGS: change (only the fields given)
+  router.patch('/:id/settings', zValidator('json', groupSettingsSchema), async (c) => {
+    const { getSocket } = getContext(c);
+    const sock = getSocket();
+    if (!sock) return c.json({ error: 'WhatsApp not connected' }, 503);
+    const id = c.req.param('id');
+    if (!id.endsWith('@g.us')) return c.json({ error: 'Not a group JID' }, 400);
+    const result = await applyGroupSettings(sock, id, c.req.valid('json'));
+    const settings = await readGroupSettings(sock, id).catch(() => null);
+    if (result.applied.length === 0)
+      return c.json({ error: 'settings_not_changed', message: 'WhatsApp refused every change (is this account an admin?)', ...result, settings }, 502);
+    return c.json({ id, ...result, settings });
   });
 
   // INVITE link

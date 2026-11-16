@@ -1050,8 +1050,11 @@ Besides `delete` and `ephemeral`, a receiver's JSON answer may contain `"read": 
 Create a group from this account, which becomes its admin. Capped per day (IST) by `groups.create_daily_cap` (default 5); over the cap you get `429 group_cap_reached`. Creating many groups quickly is a strong ban signal.
 
 ```json
-{ "name": "Flat 4B", "participants": ["+91 98123 45678", "919988776655"], "description": "optional" }
+{ "name": "Flat 4B", "participants": ["+91 98123 45678", "919988776655"], "description": "optional",
+  "settings": { "membersCanAdd": false, "membersCanEditInfo": false } }
 ```
+
+`settings` is optional: the same fields as `PATCH /api/groups/:id/settings` below, applied right after the group is created. The response then also carries `"settings": { "applied": [...], "failed": [...] }`. A refused setting doesn't undo the group.
 
 Response `201`:
 
@@ -1087,7 +1090,33 @@ The group is created with this account as its only member, as `superadmin` (owne
 
 `{ "id", "inviteLink" }`. This account must be an admin of the group.
 
-`/api/health` lists `group-create` when these exist.
+### GET /api/groups/:id/settings
+
+The group's permissions as WhatsApp reports them:
+
+```json
+{ "id": "120363...@g.us", "settings": { "membersCanAdd": false, "membersCanEditInfo": false, "adminsOnlyMessages": false } }
+```
+
+| Setting | `false` means | `true` means | New WhatsApp groups |
+|---|---|---|---|
+| `membersCanAdd` | only admins can add members | every member can add | `true` |
+| `membersCanEditInfo` | only admins can change the name, photo and description | every member can | `true` |
+| `adminsOnlyMessages` | everyone can send messages | only admins can send messages | `false` |
+
+### PATCH /api/groups/:id/settings
+
+Change any of the three; the ones left out stay as they are. This account must be an admin of the group.
+
+```json
+{ "membersCanAdd": false, "membersCanEditInfo": false }
+```
+
+Response: `{ "id", "applied": ["membersCanAdd", "membersCanEditInfo"], "failed": [], "settings": { ...as now } }`. A change WhatsApp refused is listed in `failed` with its `error`; if every change was refused (usually: this account isn't an admin), the answer is `502 settings_not_changed` with the same fields.
+
+`membersCanAdd: false` only holds while the members are not admins: anyone you promote can add people again. People can still join through the invite link.
+
+`/api/health` lists `group-create` and `group-settings` when these exist.
 
 ## Multiuser tenants
 

@@ -9,11 +9,32 @@ export const listGroupsSchema = z.object({
 
 const person = z.string().min(3).max(64);
 
+/**
+ * Group permissions. Each one left out is not changed.
+ * - membersCanAdd: false = only admins can add members
+ * - membersCanEditInfo: false = only admins can change the name, photo and description
+ * - adminsOnlyMessages: true = only admins can send messages
+ */
+const groupSettingsFields = z.object({
+  membersCanAdd: z.boolean().optional(),
+  membersCanEditInfo: z.boolean().optional(),
+  adminsOnlyMessages: z.boolean().optional(),
+});
+
+export const groupSettingsSchema = groupSettingsFields.refine(
+  (v) => v.membersCanAdd !== undefined || v.membersCanEditInfo !== undefined || v.adminsOnlyMessages !== undefined,
+  { message: 'Give membersCanAdd, membersCanEditInfo or adminsOnlyMessages' },
+);
+
+export type GroupSettingsInput = z.infer<typeof groupSettingsFields>;
+
 export const createGroupSchema = z.object({
   name: z.string().trim().min(1).max(100),
   /** Phones or JIDs to add. This account is always in it (as admin). */
   participants: z.array(person).min(1).max(50),
   description: z.string().max(512).optional(),
+  /** Permissions to set right after creating it (see groupSettingsSchema). */
+  settings: groupSettingsFields.optional(),
 });
 
 export const updateParticipantsSchema = z
