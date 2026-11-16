@@ -15,6 +15,7 @@ import { createRateLimiter } from './rate-limit/rate-limiter.js';
 import { createWebSocketHandler } from './api/ws.js';
 import { setupDeliveryListener } from './delivery/delivery.listener.js';
 import { setupWebhookListener } from './webhooks/webhook.listener.js';
+import { type Extension, attachExtensions } from './extensions.js';
 
 /**
  * Create the single-tenant server plugin.
@@ -28,8 +29,9 @@ export async function createSingleTenantPlugin(params: {
   migrationsDir: string;
   encryptionKey: string;
   apiKey: string;
+  extensions?: Extension[];
 }): Promise<ServerPlugin> {
-  const { config, logger, migrationsDir, encryptionKey, apiKey } = params;
+  const { config, logger, migrationsDir, encryptionKey, apiKey, extensions = [] } = params;
 
   // Initialize database + run migrations
   const dbPath = process.env.OPENWA_DB_PATH || './data/openwa.db';
@@ -107,6 +109,7 @@ export async function createSingleTenantPlugin(params: {
       connectionManager.onConnected((sock) => {
         setupDeliveryListener(sock, db, broadcastFn);
         setupWebhookListener(sock, db, logger.child({ module: 'webhooks' }));
+        attachExtensions(extensions, sock, { db, config, logger });
         logger.info('Delivery status + webhook listeners attached');
       });
 

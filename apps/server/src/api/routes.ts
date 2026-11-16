@@ -6,6 +6,7 @@ import { secureHeaders } from 'hono/secure-headers';
 import { serveStatic } from '@hono/node-server/serve-static';
 import type { Queue } from 'bullmq';
 import type { ServerPlugin } from '../plugin.js';
+import type { Extension } from '../extensions.js';
 import { getContext } from '../context.js';
 import { createHealthRouter } from './health.js';
 import { renderStatusPage } from '../web/status-page.js';
@@ -36,7 +37,7 @@ const WEB_DIST = '../web/dist';
  * 4. SPA fallback (production: serves index.html for client-side routing)
  * 5. Status page (development fallback when web build doesn't exist)
  */
-export function createApp(plugin: ServerPlugin, messageQueue: Queue) {
+export function createApp(plugin: ServerPlugin, messageQueue: Queue, extensions: Extension[] = []) {
   const app = new Hono();
 
   // Security headers on all responses
@@ -125,6 +126,11 @@ export function createApp(plugin: ServerPlugin, messageQueue: Queue) {
 
   // Reply API: uncapped answers inside the 24 hour window after a chat wrote
   app.route('/api/reply', createReplyRouter());
+
+  // Extension routes (behind the same API key auth as the rest of /api)
+  for (const ext of extensions) {
+    for (const { basePath, router } of ext.routes ?? []) app.route(`/api/${basePath}`, router);
+  }
 
   // Test send endpoint (development only)
   app.post('/api/test-send', async (c) => {

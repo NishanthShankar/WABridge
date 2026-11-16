@@ -14,7 +14,13 @@
     "./rate-limit/rate-limiter": "./src/rate-limit/rate-limiter.ts",
     "./crypto/vault": "./src/crypto/vault.ts",
     "./delivery/delivery.listener": "./src/delivery/delivery.listener.ts",
-    "./webhooks/webhook.listener": "./src/webhooks/webhook.listener.ts"
+    "./webhooks/webhook.listener": "./src/webhooks/webhook.listener.ts",
+    "./webhooks/webhooks.service": "./src/webhooks/webhooks.service.ts",
+    "./webhooks/jid": "./src/webhooks/jid.ts",
+    "./templates/renderer": "./src/templates/renderer.ts",
+    "./templates/templates.service": "./src/templates/templates.service.ts",
+    "./db/schema": "./src/db/schema.ts",
+    "./extensions": "./src/extensions.ts"
   },
   "scripts": {
     "build": "tsc",

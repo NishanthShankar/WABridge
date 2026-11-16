@@ -10,6 +10,7 @@ import { createApp } from './api/routes.js';
 import { createMessageQueue } from './scheduler/queue.js';
 import { createMessageWorker } from './scheduler/worker.js';
 import type { ServerPlugin } from './plugin.js';
+import { loadExtensions } from './extensions.js';
 /**
  * openWA Server - WhatsApp Bridge
  *
@@ -48,6 +49,9 @@ async function main(): Promise<void> {
   // 3.5. Resolve API key (single-tenant auth)
   const apiKey = resolveApiKey(config, configPath, logger);
 
+  // 3.6. Load optional extensions listed in config.extensions
+  const extensions = await loadExtensions(config, logger);
+
   // 4. Load plugin
   const migrationsDir = resolve(import.meta.dirname, '../drizzle');
   let plugin: ServerPlugin;
@@ -60,12 +64,13 @@ async function main(): Promise<void> {
       logger: pino.Logger;
       migrationsDir: string;
       encryptionKey: string;
-    }) => Promise<ServerPlugin>)({ config, logger, migrationsDir, encryptionKey });
+      extensions: typeof extensions;
+    }) => Promise<ServerPlugin>)({ config, logger, migrationsDir, encryptionKey, extensions });
     logger.info('Multi-tenant plugin loaded');
   } catch {
     // Fall back to single-tenant mode (built-in)
     const { createSingleTenantPlugin } = await import('./single-tenant.js');
-    plugin = await createSingleTenantPlugin({ config, logger, migrationsDir, encryptionKey, apiKey });
+    plugin = await createSingleTenantPlugin({ config, logger, migrationsDir, encryptionKey, apiKey, extensions });
     logger.info('Single-tenant mode');
   }
 
@@ -77,7 +82,7 @@ async function main(): Promise<void> {
   );
 
   // 6. Create Hono app with all routes
-  const { app, injectWebSocket } = createApp(plugin, messageQueue);
+  const { app, injectWebSocket } = createApp(plugin, messageQueue, extensions);
 
   // 7. Create BullMQ message worker
   const messageWorker = createMessageWorker(
