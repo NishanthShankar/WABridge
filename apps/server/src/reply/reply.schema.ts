@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { POLL_MODES } from '../polls/polls.js';
 import { MEDIA_TYPES } from '../scheduler/message-payload.js';
 
 const messageRef = z.object({
@@ -27,7 +28,7 @@ export const replySchema = z
     mentions: z.array(z.string().min(1).max(64)).max(50).optional(),
     /** React to a message instead of (or as well as) sending text. emoji "" removes it. */
     reaction: messageRef.extend({ emoji: z.string().max(16) }).optional(),
-    /** Send a poll. options: 2-12 distinct choices. multiple: allow picking more than one. */
+    /** Send a poll. options: 2-12 distinct choices. multiple: allow picking more than one. Votes come back as poll.vote webhooks. */
     poll: z
       .object({
         name: z.string().min(1).max(255),
@@ -39,6 +40,16 @@ export const replySchema = z
             message: 'Poll options must be distinct',
           }),
         multiple: z.boolean().optional(),
+        /** updateEveryTime (default) | lockFirstVote | deleteAfterVote */
+        mode: z.enum(POLL_MODES).optional(),
+        /** Reaction after a counted vote, or false for none. Default 👍. Not used by deleteAfterVote. */
+        react: z
+          .union([z.string().min(1).max(16), z.literal(false)])
+          .optional(),
+        /** Sent after a counted vote, or false for none. {{option}}, {{poll}}. deleteAfterVote default: "You chose {{option}}". */
+        confirmText: z
+          .union([z.string().min(1).max(1024), z.literal(false)])
+          .optional(),
       })
       .optional(),
     /** Show "typing…"for a moment before the text. Default true. */

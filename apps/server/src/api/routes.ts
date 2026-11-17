@@ -17,6 +17,7 @@ import { createSchedulingRouter } from '../scheduling/scheduling.router.js';
 import { createGroupsRouter } from '../groups/groups.router.js';
 import { createRateLimitRouter } from '../rate-limit/rate-limit.router.js';
 import { createWebhooksRouter } from '../webhooks/webhooks.router.js';
+import { createPollsRouter } from '../polls/polls.router.js';
 import { createReplyRouter } from '../reply/reply.router.js';
 
 /** Relative path from CWD (apps/server/) to the web build output */
@@ -126,6 +127,7 @@ export function createApp(plugin: ServerPlugin, messageQueue: Queue, extensions:
 
   // Reply API: uncapped answers inside the 24 hour window after a chat wrote
   app.route('/api/reply', createReplyRouter());
+  app.route('/api/polls', createPollsRouter());
 
   // Extension routes (behind the same API key auth as the rest of /api)
   for (const ext of extensions) {

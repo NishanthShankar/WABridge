@@ -13,6 +13,7 @@ import type {
 } from '@whiskeysockets/baileys';
 import type { Logger } from 'pino';
 import type { createDatabase } from '../db/client.js';
+import { handlePollVote } from '../polls/polls.js';
 import { recordInbound } from './chat-activity.js';
 import { type GroupCache, createGroupCache } from './group-cache.js';
 import { isGroupJid, jidToPhone, ownJids } from './jid.js';
@@ -184,6 +185,30 @@ async function handleMessage(
     isGroup,
     group: isGroup ? { id: remoteJid, name: group?.subject ?? null } : null,
   };
+
+  // ── Poll votes: decrypt, record, respond, then tell the same webhooks as messages ──
+  if (content.pollUpdateMessage) {
+    const hooksFor = (): Webhook[] =>
+      isGroup ? service.getAllEvents() : service.getByPhone(senderPhone);
+    const vote = await handlePollVote({
+      sock,
+      db,
+      logger,
+      update: content.pollUpdateMessage,
+      voterJid: authorJid,
+      voterAltJid: altJid,
+      voterPhone: senderPhone,
+      // A multi-choice vote that became final after the voter stopped tapping
+      onSettled: (settled) => {
+        const payload = { ...base, timestamp: new Date().toISOString(), ...settled, messageId: key.id };
+        for (const hook of hooksFor()) fireWebhook(hook, payload, logger);
+      },
+    });
+    if (!vote) return;
+    const payload = { ...base, ...vote, messageId: key.id };
+    for (const hook of hooksFor()) fireWebhook(hook, payload, logger);
+    return;
+  }
 
   // ── Edits, deletes and reactions: opt-in events ────────────────────────────
   if (isEdit || isRevoke || content.reactionMessage) {

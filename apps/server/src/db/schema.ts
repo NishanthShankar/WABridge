@@ -199,6 +199,54 @@ export const chatActivity = sqliteTable('chat_activity', {
   lastInboundAt: integer('last_inbound_at', { mode: 'timestamp_ms' }).notNull(),
 });
 
+/**
+ * Polls this account sent. Kept so votes can be decrypted (secret) and turned back into
+ * option names, and so the bridge knows how to respond to each vote (mode, react, confirmText).
+ */
+export const polls = sqliteTable(
+  'polls',
+  {
+    /** WhatsApp message id of the poll */
+    id: text('id').primaryKey(),
+    chatJid: text('chat_jid').notNull(),
+    name: text('name').notNull(),
+    /** JSON array of option names, in order */
+    options: text('options').notNull(),
+    /** 1 = pick one, 0 = pick any number */
+    selectableCount: integer('selectable_count').notNull(),
+    /** updateEveryTime | lockFirstVote | deleteAfterVote */
+    mode: text('mode').notNull(),
+    /** Emoji to react with on the poll after a counted vote; null = no reaction */
+    react: text('react'),
+    /** Text sent after a counted vote; {{option}} and {{poll}} are filled in. null = none */
+    confirmText: text('confirm_text'),
+    /** messageSecret of the poll (base64). Votes are encrypted with it. */
+    secret: text('secret').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    deletedAt: integer('deleted_at', { mode: 'timestamp_ms' }),
+  },
+  (table) => [index('polls_chat_idx').on(table.chatJid)],
+);
+
+/** Every vote received on a poll in `polls`, including changes and ignored ones. */
+export const pollVotes = sqliteTable(
+  'poll_votes',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    pollId: text('poll_id').notNull(),
+    voterJid: text('voter_jid').notNull(),
+    voterPhone: text('voter_phone'),
+    /** JSON array of the option names picked (empty when they removed their vote) */
+    selected: text('selected').notNull(),
+    /** false when the mode ignored this vote (locked, poll already deleted, ...) */
+    counted: integer('counted', { mode: 'boolean' }).notNull(),
+    /** null = counts and is final. settling (multi-choice, still tapping) | locked | poll_deleted | empty | superseded */
+    note: text('note'),
+    at: integer('at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (table) => [index('poll_votes_poll_idx').on(table.pollId)],
+);
+
 // ─── Drizzle Relations (for relational query API) ────────────────────────────
 
 export const contactsRelations = relations(contacts, ({ many }) => ({

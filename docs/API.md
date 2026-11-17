@@ -998,7 +998,7 @@ Answer a chat that wrote to this account in the last 24 hours, with text, media 
 | `quote` | `{messageId, fromMe?, participant?, text?}` | Show the answer as a reply to that message. In groups `participant` is who wrote it. |
 | `mentions` | string[] | Phones or JIDs to @mention. Put `@<number>` in `text` where each should show. |
 | `reaction` | `{messageId, emoji, fromMe?, participant?}` | React to a message. `emoji: ""` removes the reaction. |
-| `poll` | `{name, options[], multiple?}` | Send a poll. `options`: 2 to 12 distinct choices, up to 100 characters each. `multiple: true` lets people pick more than one (default: one). Sent on its own, without `text` or `mediaUrl`. Votes are not reported in webhooks yet. |
+| `poll` | object | Send a poll. Sent on its own, without `text` or `mediaUrl`. See [Polls](#polls). |
 | `typing` | boolean | Show "typing…" briefly before the text. Default `true`. |
 
 Give `text`, `mediaUrl`, `poll`, `reaction` or a mix. Media follows the same rules as text: 24 hour window, no delay, not counted toward the daily cap. `GET /api/health` lists `"reply-media"` under `features` on servers that accept media here, and `"reply-poll"` on servers that accept `poll`.
@@ -1018,6 +1018,107 @@ curl -X POST https://<tenant>.wabridge.co.in/api/reply \
 ```
 
 Response: `{ "messageId": "3EB0...", "reactionId": null, "chatId": "919812345678@s.whatsapp.net" }`. Keep `messageId`: when the person later replies to this message, the webhook's `quoted.messageId` is this value.
+
+## Polls
+
+Send a poll with `POST /api/reply` (so the 24 hour window applies). Votes come back decrypted as `poll.vote` webhooks, and the bridge can respond to each vote by itself. `GET /api/health` lists `"poll-votes"` under `features` on servers with this.
+
+```json
+{
+  "chatId": "919812345678@s.whatsapp.net",
+  "poll": {
+    "name": "Which slot works?",
+    "options": ["Morning", "Afternoon", "Evening"],
+    "multiple": false,
+    "mode": "lockFirstVote",
+    "react": "👍",
+    "confirmText": "Got it: {{option}}. This answer is final."
+  }
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | The question, up to 255 characters. |
+| `options` | string[] | 2 to 12 different choices, up to 100 characters each. |
+| `multiple` | boolean | `true` lets people tick any number of options. Default `false` (pick one). |
+| `mode` | string | What a vote does. `updateEveryTime` (default), `lockFirstVote` or `deleteAfterVote`. See below. |
+| `react` | string \| `false` | Emoji the bridge reacts to the poll with after a vote that counts. Default `👍`. `false` turns it off. Not used by `deleteAfterVote`. |
+| `confirmText` | string \| `false` | Message sent after a vote that counts. `{{option}}` becomes the choice (several joined with ", "), `{{poll}}` the question. Default: none, except `deleteAfterVote`, which defaults to `You chose {{option}}`. `false` turns it off. |
+
+The response's `messageId` is the poll's id.
+
+### Modes
+
+WhatsApp always lets people change their vote, and has no setting to stop it. The modes decide what the bridge does about it.
+
+| Mode | Which vote counts | What the bridge does |
+|---|---|---|
+| `updateEveryTime` | Every vote. The latest one is the person's answer. Removing all ticks clears it. | Reacts (and sends `confirmText` if set) after each vote. Removing the vote removes the reaction. |
+| `lockFirstVote` | The first vote only. Later changes are recorded with `note: "locked"` and don't count. | Reacts and sends `confirmText` once, after the first vote. Their phone still shows a changed vote; only the bridge keeps the first. |
+| `deleteAfterVote` | The first vote. | Sends `confirmText` (default `You chose {{option}}`), then deletes the poll for everyone, so it can't be changed. Meant for 1:1 chats: in a group, the first voter ends the poll for everyone. |
+
+**Multi-choice polls** (`multiple: true`): WhatsApp sends a new vote on every tap. In `lockFirstVote` and `deleteAfterVote` the bridge waits until the person has stopped changing their ticks for 15 seconds, then locks (or deletes). Votes during that time arrive with `note: "settling"`, and one more `poll.vote` with `note: null` arrives when it becomes final. A server restart during those 15 seconds leaves the vote counted but unconfirmed.
+
+### Webhook: `poll.vote`
+
+Sent to the same webhooks as messages from that chat (1:1: the sender's phone webhooks and catch-alls; groups: `allEvents` catch-alls).
+
+```json
+{
+  "event": "poll.vote",
+  "timestamp": "2026-11-18T10:00:00.000Z",
+  "from": "919812345678",
+  "chatId": "919812345678@s.whatsapp.net",
+  "isGroup": false,
+  "pushName": "Asha",
+  "pollId": "3EB0...",
+  "pollName": "Which slot works?",
+  "mode": "lockFirstVote",
+  "multiple": false,
+  "voterPhone": "919812345678",
+  "selected": ["Morning"],
+  "counted": true,
+  "note": null,
+  "current": ["Morning"],
+  "pollDeleted": false
+}
+```
+
+- `selected`: what this vote picked (empty when they removed their vote).
+- `counted`: whether the mode accepted it.
+- `note`: `null` (counts, final), `settling` (multi-choice, still tapping), `locked`, `poll_deleted`, `empty` or `superseded`.
+- `current`: what counts for this person now. **Use this as their answer.**
+
+Only polls sent after this feature was deployed can be read: a vote is encrypted with a secret the bridge keeps when it sends the poll.
+
+### GET /api/polls/:id
+
+The poll, results and every vote received, oldest first.
+
+```json
+{
+  "id": "3EB0...", "chatId": "919812345678@s.whatsapp.net", "name": "Which slot works?",
+  "options": ["Morning", "Afternoon", "Evening"], "multiple": false, "mode": "lockFirstVote",
+  "createdAt": "...", "deletedAt": null,
+  "results": {
+    "tally": { "Morning": 1, "Afternoon": 0, "Evening": 0 },
+    "voters": [{ "voter": "5550001@lid", "phone": "919812345678", "selected": ["Morning"], "at": "..." }]
+  },
+  "votes": [
+    { "phone": "919812345678", "selected": ["Morning"], "counted": true, "note": null, "at": "..." },
+    { "phone": "919812345678", "selected": ["Evening"], "counted": false, "note": "locked", "at": "..." }
+  ]
+}
+```
+
+### GET /api/polls
+
+Recent polls, newest first, with results (no vote history). Query: `chatId` or `phone` to filter by chat, `limit` (default 20, max 100).
+
+### DELETE /api/polls/:id
+
+Delete the poll for everyone in the chat. WhatsApp allows this for about 2 days after sending. Votes already received are kept. Response: `{ "deleted": true, "deletedAt": "..." }`. Deleting an already deleted poll does nothing and returns the same.
 
 ### GET /api/groups/:id/participants
 

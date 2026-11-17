@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
-import { setContext, type AppContext } from '../../context.js';
+import { type AppContext, setContext } from '../../context.js';
 import { createDatabase } from '../../db/client.js';
 import { buildMessagePayload } from '../../scheduler/message-payload.js';
 import { recordInbound } from '../../webhooks/chat-activity.js';
@@ -13,10 +13,18 @@ const JID = '919812345678@s.whatsapp.net';
 function setup() {
   const db = createDatabase(':memory:');
   migrate(db, { migrationsFolder: resolve(__dirname, '../../../drizzle') });
-  const sent: Array<{ jid: string; content: Record<string, unknown>; opts: unknown }> = [];
+  const sent: Array<{
+    jid: string;
+    content: Record<string, unknown>;
+    opts: unknown;
+  }> = [];
   const sock = {
     sendPresenceUpdate: async () => {},
-    sendMessage: async (jid: string, content: Record<string, unknown>, opts: unknown) => {
+    sendMessage: async (
+      jid: string,
+      content: Record<string, unknown>,
+      opts: unknown,
+    ) => {
       sent.push({ jid, content, opts });
       return { key: { id: `MSG${sent.length}` } };
     },
@@ -24,7 +32,11 @@ function setup() {
   };
   const app = new Hono();
   app.use('*', async (c, next) => {
-    setContext(c, { db, getSocket: () => sock, tenantId: 't1' } as unknown as AppContext);
+    setContext(c, {
+      db,
+      getSocket: () => sock,
+      tenantId: 't1',
+    } as unknown as AppContext);
     await next();
   });
   app.route('/api/reply', createReplyRouter());
@@ -66,7 +78,10 @@ describe('POST /api/reply with media', () => {
       typing: false,
     });
     expect(res.status).toBe(200);
-    expect(sent[0].content).toMatchObject({ document: { url: 'https://example.com/a.pdf' }, fileName: 'a.pdf' });
+    expect(sent[0].content).toMatchObject({
+      document: { url: 'https://example.com/a.pdf' },
+      fileName: 'a.pdf',
+    });
   });
 
   it('keeps the 24 hour rule for media', async () => {
@@ -83,9 +98,18 @@ describe('POST /api/reply with media', () => {
   it('rejects mediaUrl without mediaType and non-http URLs', async () => {
     const { db, post } = setup();
     recordInbound(db, JID, null);
-    expect((await post({ chatId: JID, mediaUrl: 'https://example.com/x.png' })).status).toBe(400);
     expect(
-      (await post({ chatId: JID, mediaUrl: 'file:///etc/passwd', mediaType: 'image' })).status,
+      (await post({ chatId: JID, mediaUrl: 'https://example.com/x.png' }))
+        .status,
+    ).toBe(400);
+    expect(
+      (
+        await post({
+          chatId: JID,
+          mediaUrl: 'file:///etc/passwd',
+          mediaType: 'image',
+        })
+      ).status,
     ).toBe(400);
   });
 });
@@ -99,7 +123,7 @@ describe('POST /api/reply with a poll', () => {
       poll: { name: 'Pick one', options: ['A', 'B', 'C'] },
     });
     expect(res.status).toBe(200);
-    expect(sent[0].content).toEqual({
+    expect(sent[0].content).toMatchObject({
       poll: { name: 'Pick one', values: ['A', 'B', 'C'], selectableCount: 1 },
     });
   });
@@ -107,10 +131,21 @@ describe('POST /api/reply with a poll', () => {
   it('rejects duplicate options, one option, and a poll with text', async () => {
     const { db, post } = setup();
     recordInbound(db, JID, null);
-    expect((await post({ chatId: JID, poll: { name: 'q', options: ['A', 'A'] } })).status).toBe(400);
-    expect((await post({ chatId: JID, poll: { name: 'q', options: ['A'] } })).status).toBe(400);
     expect(
-      (await post({ chatId: JID, text: 'hi', poll: { name: 'q', options: ['A', 'B'] } })).status,
+      (await post({ chatId: JID, poll: { name: 'q', options: ['A', 'A'] } }))
+        .status,
+    ).toBe(400);
+    expect(
+      (await post({ chatId: JID, poll: { name: 'q', options: ['A'] } })).status,
+    ).toBe(400);
+    expect(
+      (
+        await post({
+          chatId: JID,
+          text: 'hi',
+          poll: { name: 'q', options: ['A', 'B'] },
+        })
+      ).status,
     ).toBe(400);
   });
 });

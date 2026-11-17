@@ -2,6 +2,7 @@ import { zValidator } from '@hono/zod-validator';
 import type { WAMessage } from '@whiskeysockets/baileys';
 import { Hono } from 'hono';
 import { getContext } from '../context.js';
+import { sendPoll } from '../polls/polls.js';
 import { buildMessagePayload } from '../scheduler/message-payload.js';
 import {
   REPLY_WINDOW_MS,
@@ -118,16 +119,7 @@ export function createReplyRouter() {
       }
 
       if (input.poll) {
-        const p = input.poll;
-        const sent = await sock.sendMessage(jid, {
-          poll: {
-            name: p.name,
-            values: p.options,
-            // 1 = pick one; 0 = pick any number
-            selectableCount: p.multiple ? 0 : 1,
-          },
-        });
-        result.messageId = sent?.key?.id ?? null;
+        result.messageId = await sendPoll(sock, db, jid, input.poll);
       }
 
       if (input.text || input.mediaUrl) {
