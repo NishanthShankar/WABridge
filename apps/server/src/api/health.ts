@@ -13,6 +13,7 @@ export const FEATURES = [
   'webhook-quoted-mentions', // quoted, mentions, botMentioned, isVoiceNote, chatId in message.received
   'webhook-retry',
   'reply-lane', // POST /api/reply
+  'reply-media', // mediaUrl + mediaType on POST /api/reply
   'group-participants', // GET /api/groups/:id/participants
   'group-create', // POST /api/groups, POST /api/groups/:id/participants, GET /api/groups/:id/invite
   'group-settings', // GET/PATCH /api/groups/:id/settings, settings on POST /api/groups

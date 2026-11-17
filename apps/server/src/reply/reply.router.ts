@@ -2,6 +2,7 @@ import { zValidator } from '@hono/zod-validator';
 import type { WAMessage } from '@whiskeysockets/baileys';
 import { Hono } from 'hono';
 import { getContext } from '../context.js';
+import { buildMessagePayload } from '../scheduler/message-payload.js';
 import {
   REPLY_WINDOW_MS,
   insideReplyWindow,
@@ -16,7 +17,8 @@ const PER_CHAT_PER_MINUTE = 12;
 /**
  * POST /api/reply: answer a chat that wrote to this account in the last 24 hours.
  *
- * This is the conversational lane. It sends at once (no queue, no random 2-8 s delay) and
+ * This is the conversational lane. It sends text and media (image, video, audio, document by
+ * URL) at once (no queue, no random 2-8 s delay) and
  * does not count toward rate_limit.daily_cap, because the other side started the conversation.
  * A chat that has not written in 24 hours gets 409 outside_reply_window: use POST /api/messages,
  * which is queued and capped.
@@ -115,10 +117,11 @@ export function createReplyRouter() {
         result.reactionId = sent?.key?.id ?? null;
       }
 
-      if (input.text) {
+      if (input.text || input.mediaUrl) {
+        const text = input.text ?? '';
         if (input.typing !== false) {
           await sock.sendPresenceUpdate('composing', jid).catch(() => {});
-          const pause = Math.min(2500, 500 + input.text.length * 15);
+          const pause = Math.min(2500, 500 + text.length * 15);
           await new Promise((resolve) => setTimeout(resolve, pause));
           await sock.sendPresenceUpdate('paused', jid).catch(() => {});
         }
@@ -140,11 +143,16 @@ export function createReplyRouter() {
         const mentions = (input.mentions ?? [])
           .map((m) => toJid(m))
           .filter((m): m is string => !!m);
+        const content = buildMessagePayload(
+          text,
+          input.mediaUrl,
+          input.mediaType,
+        );
         const sent = await sock.sendMessage(
           jid,
           mentions.length
-            ? { text: input.text, mentions }
-            : { text: input.text },
+            ? ({ ...content, mentions } as typeof content)
+            : content,
           quoted ? { quoted } : undefined,
         );
         result.messageId = sent?.key?.id ?? null;

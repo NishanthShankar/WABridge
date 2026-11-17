@@ -987,23 +987,33 @@ Response includes `total` for calculating pages client-side.
 
 ### POST /api/reply
 
-Answer a chat that wrote to this account in the last 24 hours. Sends at once: no queue, no random delay, and it does **not** count toward `rate_limit.daily_cap`. A chat that has not written in 24 hours gets `409 outside_reply_window`; send to it with `POST /api/messages` instead (queued and capped). At most 12 answers per chat per minute (`429 too_many_replies`). Answers are not stored and their text is never logged.
+Answer a chat that wrote to this account in the last 24 hours, with text, media or a reaction. Sends at once: no queue, no random delay, and it does **not** count toward `rate_limit.daily_cap`. A chat that has not written in 24 hours gets `409 outside_reply_window`; send to it with `POST /api/messages` instead (queued and capped). At most 12 answers per chat per minute (`429 too_many_replies`). Answers are not stored and their text is never logged.
 
 | Field | Type | Notes |
 |---|---|---|
 | `chatId` or `phone` | string | Exactly one. `chatId` is the webhook's `chatId` (works for groups and LID senders). |
-| `text` | string | Up to 4096 characters. |
+| `text` | string | Up to 4096 characters. With `mediaUrl` it is the caption (ignored for audio). |
+| `mediaUrl` | string | Public http(s) URL of the file. The bridge downloads it and sends it. |
+| `mediaType` | `image` \| `video` \| `audio` \| `document` | Required with `mediaUrl`. A document's file name is taken from the URL. |
 | `quote` | `{messageId, fromMe?, participant?, text?}` | Show the answer as a reply to that message. In groups `participant` is who wrote it. |
 | `mentions` | string[] | Phones or JIDs to @mention. Put `@<number>` in `text` where each should show. |
 | `reaction` | `{messageId, emoji, fromMe?, participant?}` | React to a message. `emoji: ""` removes the reaction. |
 | `typing` | boolean | Show "typing…" briefly before the text. Default `true`. |
 
-Give `text`, `reaction` or both.
+Give `text`, `mediaUrl`, `reaction` or a mix. Media follows the same rules as text: 24 hour window, no delay, not counted toward the daily cap. `GET /api/health` lists `"reply-media"` under `features` on servers that accept media here.
 
 ```bash
 curl -X POST https://<tenant>.wabridge.co.in/api/reply \
   -H "X-API-Key: sk_..." -H "Content-Type: application/json" \
   -d '{"chatId":"919812345678@s.whatsapp.net","text":"Added: buy milk","quote":{"messageId":"3EB0...","text":"buy milk"}}'
+```
+
+Sending an image:
+
+```bash
+curl -X POST https://<tenant>.wabridge.co.in/api/reply \
+  -H "X-API-Key: sk_..." -H "Content-Type: application/json" \
+  -d '{"chatId":"919812345678@s.whatsapp.net","text":"Step 1: open Settings","mediaUrl":"https://example.com/guide/step1.png","mediaType":"image"}'
 ```
 
 Response: `{ "messageId": "3EB0...", "reactionId": null, "chatId": "919812345678@s.whatsapp.net" }`. Keep `messageId`: when the person later replies to this message, the webhook's `quoted.messageId` is this value.

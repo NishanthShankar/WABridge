@@ -1,37 +1,9 @@
 import { Worker } from 'bullmq';
 import { eq, and, inArray, sql } from 'drizzle-orm';
-import type { AnyMessageContent } from '@whiskeysockets/baileys';
 import { scheduledMessages, contacts, groups, recurringRules } from '../db/schema.js';
 import type { AppConfig } from '../config/schema.js';
 import type { AppContext } from '../context.js';
-
-/**
- * Build the appropriate Baileys message payload based on media type.
- */
-function buildMessagePayload(
-  content: string,
-  mediaUrl?: string | null,
-  mediaType?: string | null,
-): AnyMessageContent {
-  if (!mediaUrl || !mediaType) {
-    return { text: content };
-  }
-
-  switch (mediaType) {
-    case 'image':
-      return { image: { url: mediaUrl }, caption: content };
-    case 'video':
-      return { video: { url: mediaUrl }, caption: content };
-    case 'audio':
-      return { audio: { url: mediaUrl }, mimetype: 'audio/mp4' };
-    case 'document': {
-      const fileName = decodeURIComponent(mediaUrl.split('/').pop()?.split('?')[0] ?? 'file');
-      return { document: { url: mediaUrl }, caption: content, fileName, mimetype: 'application/octet-stream' };
-    }
-    default:
-      return { text: content };
-  }
-}
+import { buildMessagePayload } from './message-payload.js';
 
 /**
  * Create the BullMQ worker that processes message send jobs.
