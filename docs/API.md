@@ -1126,7 +1126,7 @@ Recent polls, newest first, with results (no vote history). Query: `chatId` or `
 
 ### DELETE /api/polls/:id
 
-Delete the poll for everyone in the chat. WhatsApp allows this for about 2 days after sending. Votes already received are kept. Response: `{ "deleted": true, "deletedAt": "..." }`. Deleting an already deleted poll does nothing and returns the same.
+Delete the poll for everyone in the chat. WhatsApp allows this for about 2 days after sending. Votes already received are kept. Reactions on the poll (such as the bridge's 👍) disappear with it (tested 2026-11-18): if the person should keep a record of their answer, send it as a separate message (`confirmText`). Response: `{ "deleted": true, "deletedAt": "..." }`. Deleting an already deleted poll does nothing and returns the same.
 
 ### GET /api/groups/:id/participants
 
