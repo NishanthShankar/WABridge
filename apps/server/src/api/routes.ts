@@ -17,6 +17,7 @@ import { createSchedulingRouter } from '../scheduling/scheduling.router.js';
 import { createGroupsRouter } from '../groups/groups.router.js';
 import { createRateLimitRouter } from '../rate-limit/rate-limit.router.js';
 import { createWebhooksRouter } from '../webhooks/webhooks.router.js';
+import { createChatsRouter } from '../chats/chats.router.js';
 import { createPollsRouter } from '../polls/polls.router.js';
 import { createDocsRouter } from './docs.js';
 import { createReplyRouter } from '../reply/reply.router.js';
@@ -129,6 +130,7 @@ export function createApp(plugin: ServerPlugin, messageQueue: Queue, extensions:
   // Reply API: uncapped answers inside the 24 hour window after a chat wrote
   app.route('/api/reply', createReplyRouter());
   app.route('/api/polls', createPollsRouter());
+  app.route('/api/chats', createChatsRouter());
 
   // The whole API reference as markdown (with extension docs), for agents
   app.route('/api/docs', createDocsRouter(extensions));

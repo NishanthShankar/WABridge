@@ -1,19 +1,21 @@
 import { zValidator } from '@hono/zod-validator';
 import type { WAMessage } from '@whiskeysockets/baileys';
 import { Hono } from 'hono';
+import { chatCandidates, replyWindow } from '../chats/chat-state.js';
 import { getContext } from '../context.js';
 import { sendPoll } from '../polls/polls.js';
 import { buildMessagePayload } from '../scheduler/message-payload.js';
-import {
-  REPLY_WINDOW_MS,
-  insideReplyWindow,
-  lastInbound,
-} from '../webhooks/chat-activity.js';
-import { isGroupJid, jidToPhone, toJid } from '../webhooks/jid.js';
+import { REPLY_WINDOW_MS } from '../webhooks/chat-activity.js';
+import { toJid } from '../webhooks/jid.js';
 import { replySchema } from './reply.schema.js';
 
-/** At most this many answers per chat per minute, so a loop in a receiver can't flood a chat. */
+/**
+ * At most this much per chat per minute, so a loop in a receiver can't flood a chat.
+ * A message (text, media or poll) weighs 1, a reaction 0.25.
+ */
 const PER_CHAT_PER_MINUTE = 12;
+const MESSAGE_WEIGHT = 1;
+const REACTION_WEIGHT = 0.25;
 
 /**
  * POST /api/reply: answer a chat that wrote to this account in the last 24 hours.
@@ -28,7 +30,20 @@ const PER_CHAT_PER_MINUTE = 12;
  */
 export function createReplyRouter() {
   const router = new Hono();
-  const recent = new Map<string, number[]>();
+  const recent = new Map<string, Array<{ t: number; w: number }>>();
+
+  // GET /api/reply/window?chatId=... | ?phone=... : the window without sending anything
+  router.get('/window', async (c) => {
+    const { db, getSocket } = getContext(c);
+    const jid = toJid(c.req.query('chatId') ?? c.req.query('phone') ?? '');
+    if (!jid)
+      return c.json(
+        { error: 'invalid_chat', message: 'chatId or phone is not valid' },
+        400,
+      );
+    const candidates = await chatCandidates(getSocket(), jid);
+    return c.json({ chatId: jid, replyWindow: replyWindow(db, candidates) });
+  });
 
   router.post('/', zValidator('json', replySchema), async (c) => {
     const { db, getSocket, tenantId } = getContext(c);
@@ -42,45 +57,46 @@ export function createReplyRouter() {
       );
 
     // A 1:1 chat may have written from its LID or its phone JID; either opens the window.
-    const candidates = [jid];
-    if (!isGroupJid(jid) && jid.endsWith('@s.whatsapp.net')) {
-      const sock = getSocket();
-      const lid = await sock?.signalRepository.lidMapping
-        .getLIDForPN(jid)
-        .catch(() => null);
-      if (lid) candidates.push(`${jidToPhone(lid)}@lid`);
-    }
-    if (!insideReplyWindow(db, candidates)) {
-      const last = lastInbound(db, candidates);
+    const candidates = await chatCandidates(getSocket(), jid);
+    const window = replyWindow(db, candidates);
+    if (!window.open) {
       return c.json(
         {
           error: 'outside_reply_window',
           message:
             'This chat has not written in the last 24 hours. Use POST /api/messages.',
-          lastInboundAt: last?.toISOString() ?? null,
+          lastInboundAt: window.lastInboundAt,
           windowHours: REPLY_WINDOW_MS / 3_600_000,
+          replyWindow: window,
         },
         409,
       );
     }
 
+    const weight =
+      (input.text || input.mediaUrl || input.poll ? MESSAGE_WEIGHT : 0) +
+      (input.reaction ? REACTION_WEIGHT : 0);
     const bucketKey = `${tenantId}|${jid}`;
     const now = Date.now();
-    const times = (recent.get(bucketKey) ?? []).filter((t) => now - t < 60_000);
-    if (times.length >= PER_CHAT_PER_MINUTE) {
+    const used = (recent.get(bucketKey) ?? []).filter((e) => now - e.t < 60_000);
+    const total = used.reduce((sum, e) => sum + e.w, 0);
+    if (total + weight > PER_CHAT_PER_MINUTE) {
+      const oldest = used[0]?.t ?? now;
       return c.json(
         {
           error: 'too_many_replies',
           message: 'Slow down: too many answers to this chat',
+          retryAfterSeconds: Math.max(1, Math.ceil((oldest + 60_000 - now) / 1000)),
+          replyWindow: window,
         },
         429,
       );
     }
-    times.push(now);
-    recent.set(bucketKey, times);
+    used.push({ t: now, w: weight });
+    recent.set(bucketKey, used);
     if (recent.size > 5000)
       for (const [k, v] of recent)
-        if (now - (v.at(-1) ?? 0) > 60_000) recent.delete(k);
+        if (now - (v.at(-1)?.t ?? 0) > 60_000) recent.delete(k);
 
     const sock = getSocket();
     if (!sock)
@@ -95,10 +111,12 @@ export function createReplyRouter() {
       messageId: string | null;
       reactionId: string | null;
       chatId: string;
+      replyWindow: typeof window;
     } = {
       messageId: null,
       reactionId: null,
       chatId: jid,
+      replyWindow: window,
     };
 
     try {

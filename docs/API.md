@@ -995,7 +995,7 @@ Response includes `total` for calculating pages client-side.
 
 ### POST /api/reply
 
-Answer a chat that wrote to this account in the last 24 hours, with text, media or a reaction. Sends at once: no queue, no random delay, and it does **not** count toward `rate_limit.daily_cap`. A chat that has not written in 24 hours gets `409 outside_reply_window`; send to it with `POST /api/messages` instead (queued and capped). At most 12 answers per chat per minute (`429 too_many_replies`). Answers are not stored and their text is never logged.
+Answer a chat that wrote to this account in the last 24 hours, with text, media or a reaction. Sends at once: no queue, no random delay, and it does **not** count toward `rate_limit.daily_cap`. A chat that has not written in 24 hours gets `409 outside_reply_window`; send to it with `POST /api/messages` instead (queued and capped). Per chat, at most 12 units a minute: a message (text, media or poll) costs 1, a reaction 0.25 (so 48 reactions, or 11 messages and 4 reactions). Over that: `429 too_many_replies` with `retryAfterSeconds`. `DELETE /api/polls/:id` and the bridge's own responses to votes don't count. The count is kept in memory and resets on restart. Answers are not stored and their text is never logged.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -1025,7 +1025,72 @@ curl -X POST https://<tenant>.wabridge.co.in/api/reply \
   -d '{"chatId":"919812345678@s.whatsapp.net","text":"Step 1: open Settings","mediaUrl":"https://example.com/guide/step1.png","mediaType":"image"}'
 ```
 
-Response: `{ "messageId": "3EB0...", "reactionId": null, "chatId": "919812345678@s.whatsapp.net" }`. Keep `messageId`: when the person later replies to this message, the webhook's `quoted.messageId` is this value.
+Response: `{ "messageId": "3EB0...", "reactionId": null, "chatId": "919812345678@s.whatsapp.net", "replyWindow": {...} }`.
+
+Every answer, including `409` and `429`, carries the chat's window:
+
+```json
+"replyWindow": {
+  "open": true,
+  "lastInboundAt": "2026-11-18T10:00:00.000Z",
+  "closesAt": "2026-11-19T10:00:00.000Z",
+  "secondsSinceInbound": 90
+}
+```
+
+Any message, poll vote, reaction, edit or delete from the chat reopens it. In a group, any member's activity opens it for the whole group.
+
+### GET /api/reply/window
+
+The same `replyWindow` without sending anything: `?chatId=` or `?phone=`. Response: `{ "chatId", "replyWindow" }`. Use it to choose between `/api/reply` and `/api/messages` up front. `secondsSinceInbound` under a minute or two means they are very likely looking at the chat, whatever their privacy settings. Keep `messageId`: when the person later replies to this message, the webhook's `quoted.messageId` is this value.
+
+## Chat state: presence and read receipts
+
+What the bridge knows about a chat beyond its messages. `GET /api/health` lists `"reply-window"` and `"chat-presence"` on servers with this.
+
+### GET /api/chats/:id
+
+`:id` is a phone number or JID. Nothing is sent to WhatsApp.
+
+```json
+{
+  "chatId": "919812345678@s.whatsapp.net",
+  "replyWindow": { "open": true, "lastInboundAt": "...", "closesAt": "...", "secondsSinceInbound": 42 },
+  "presence": { "presence": "available", "lastSeen": null, "at": "2026-11-18T10:00:40.000Z" },
+  "lastRead": { "messageId": "3EB0...", "status": "read", "by": "919812345678", "at": "2026-11-18T10:00:35.000Z" }
+}
+```
+
+- `presence`: the last one received (`available`, `unavailable`, `composing`, `recording`, `paused`), or `null`. Only arrives for chats being watched (below) and only if their privacy settings show it.
+- `lastRead`: the last of our messages they read (`read`) or played (`played`, voice notes), or `null`. Only arrives if they have read receipts on.
+
+Presence and read state are kept in memory: they reset when the server restarts or reconnects.
+
+### GET /api/chats/:id/presence
+
+Ask WhatsApp to send this person's presence, then return the latest one. `?wait=3000` waits up to that many milliseconds (max 5000) for a fresh update. The request is renewed at most once a minute per chat; updates keep arriving for a while after it.
+
+```json
+{ "chatId": "919812345678@s.whatsapp.net", "presence": { "presence": "available", "lastSeen": null, "at": "..." }, "fresh": true }
+```
+
+`fresh: false` means nothing new came in while waiting. That is common: many people hide their online status, and silence does **not** mean they are away. To decide whether someone is likely watching, prefer `replyWindow.secondsSinceInbound`.
+
+### Webhooks: `presence.update`, `message.read`
+
+Sent to catch-all webhooks with `allEvents`.
+
+```json
+{ "event": "presence.update", "timestamp": "...", "chatId": "919812345678@s.whatsapp.net", "isGroup": false,
+  "from": "919812345678", "presence": "composing", "lastSeen": null }
+```
+
+```json
+{ "event": "message.read", "timestamp": "...", "chatId": "919812345678@s.whatsapp.net", "isGroup": false,
+  "from": "919812345678", "messageId": "3EB0...", "status": "read", "readAt": "..." }
+```
+
+`message.read` fires once per message and reader for messages this account sent: in 1:1 chats when they open it, in groups for each member who reads it. `status` is `played` for a voice note they listened to.
 
 ## Polls
 

@@ -13,6 +13,7 @@ import type {
 } from '@whiskeysockets/baileys';
 import type { Logger } from 'pino';
 import type { createDatabase } from '../db/client.js';
+import { setupChatStateListener } from '../chats/chat-state.js';
 import { handlePollVote } from '../polls/polls.js';
 import { recordInbound } from './chat-activity.js';
 import { type GroupCache, createGroupCache } from './group-cache.js';
@@ -55,6 +56,8 @@ export function setupWebhookListener(
 ): void {
   const groupCache = createGroupCache(sock, logger);
   const service = createWebhooksService(db);
+  // Presence and read receipts: presence.update and message.read webhooks, GET /api/chats/:id
+  setupChatStateListener(sock, db, logger);
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     // Only handle real-time messages, not history sync

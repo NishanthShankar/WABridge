@@ -16,6 +16,8 @@ export const FEATURES = [
   'reply-media', // mediaUrl + mediaType on POST /api/reply
   'reply-poll', // poll on POST /api/reply
   'poll-votes', // poll.vote webhooks, poll modes, GET/DELETE /api/polls
+  'reply-window', // replyWindow on /api/reply, GET /api/reply/window, GET /api/chats/:id
+  'chat-presence', // presence.update + message.read webhooks, GET /api/chats/:id/presence
   'api-docs', // GET /api/docs: this whole reference as markdown
   'group-info', // PATCH /api/groups/:id (name, description), PUT/DELETE /api/groups/:id/picture, pictureUrl on create
   'group-participants', // GET /api/groups/:id/participants
