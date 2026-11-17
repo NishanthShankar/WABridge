@@ -254,6 +254,7 @@ The package's default export is an `ExtensionFactory` (see `apps/server/src/exte
 
 - `routes`: Hono routers mounted under `/api/<basePath>`, behind the normal API key auth. Use `getContext(c)` from `@openwa/server/context` to reach the account's database and socket.
 - `onConnected(sock, ctx)`: called after every WhatsApp connection of every account, with that account's `db`, `config`, `logger` and the extension's `options`.
+- `docs`: markdown (or a function returning it) describing the extension's routes and webhooks. It is appended to `GET /api/docs`, which serves the whole API reference behind the API key.
 
 A listed package that fails to load is logged and skipped. Extensions keep their own tables (e.g. `CREATE TABLE IF NOT EXISTS` on first use) rather than adding server migrations.
 

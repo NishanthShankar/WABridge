@@ -40,6 +40,11 @@ export interface Extension {
    * and each user in multi-tenant mode). Attach sock.ev listeners here.
    */
   onConnected?: (sock: WASocket, ctx: ExtensionConnectionContext) => void;
+  /**
+   * Markdown documenting the extension's routes and webhooks. Appended to GET /api/docs
+   * under "# Extension: <name>". A function is called on every request.
+   */
+  docs?: string | (() => string | Promise<string>);
 }
 
 export type ExtensionFactory = (params: {

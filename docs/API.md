@@ -10,6 +10,12 @@ Complete developer guide for integrating with the WABridge API.
 X-API-Key: sk_your_key_here
 ```
 
+**This whole reference as markdown:** `GET /api/docs` (same `X-API-Key`). It also includes the docs of any extensions loaded on the server. Point an agent at it to learn the API:
+
+```bash
+curl -H "X-API-Key: sk_..." https://<tenant>.wabridge.co.in/api/docs
+```
+
 ---
 
 ## Quick Examples
