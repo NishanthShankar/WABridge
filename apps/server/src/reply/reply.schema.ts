@@ -27,7 +27,21 @@ export const replySchema = z
     mentions: z.array(z.string().min(1).max(64)).max(50).optional(),
     /** React to a message instead of (or as well as) sending text. emoji "" removes it. */
     reaction: messageRef.extend({ emoji: z.string().max(16) }).optional(),
-    /** Show "typing…" for a moment before the text. Default true. */
+    /** Send a poll. options: 2-12 distinct choices. multiple: allow picking more than one. */
+    poll: z
+      .object({
+        name: z.string().min(1).max(255),
+        options: z
+          .array(z.string().min(1).max(100))
+          .min(2)
+          .max(12)
+          .refine((o) => new Set(o).size === o.length, {
+            message: 'Poll options must be distinct',
+          }),
+        multiple: z.boolean().optional(),
+      })
+      .optional(),
+    /** Show "typing…"for a moment before the text. Default true. */
     typing: z.boolean().optional(),
   })
   .refine((v) => !!v.chatId !== !!v.phone, {
@@ -45,8 +59,12 @@ export const replySchema = z
     message: 'mediaUrl must be http or https',
     path: ['mediaUrl'],
   })
-  .refine((v) => !!v.text || !!v.reaction || !!v.mediaUrl, {
-    message: 'Give text, mediaUrl, reaction or a mix',
+  .refine((v) => !!v.text || !!v.reaction || !!v.mediaUrl || !!v.poll, {
+    message: 'Give text, mediaUrl, poll, reaction or a mix',
+  })
+  .refine((v) => !(v.poll && (v.text || v.mediaUrl)), {
+    message: 'A poll is sent on its own: put the question in poll.name',
+    path: ['poll'],
   });
 
 export type ReplyInput = z.infer<typeof replySchema>;

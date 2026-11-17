@@ -117,6 +117,19 @@ export function createReplyRouter() {
         result.reactionId = sent?.key?.id ?? null;
       }
 
+      if (input.poll) {
+        const p = input.poll;
+        const sent = await sock.sendMessage(jid, {
+          poll: {
+            name: p.name,
+            values: p.options,
+            // 1 = pick one; 0 = pick any number
+            selectableCount: p.multiple ? 0 : 1,
+          },
+        });
+        result.messageId = sent?.key?.id ?? null;
+      }
+
       if (input.text || input.mediaUrl) {
         const text = input.text ?? '';
         if (input.typing !== false) {

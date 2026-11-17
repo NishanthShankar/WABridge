@@ -998,9 +998,10 @@ Answer a chat that wrote to this account in the last 24 hours, with text, media 
 | `quote` | `{messageId, fromMe?, participant?, text?}` | Show the answer as a reply to that message. In groups `participant` is who wrote it. |
 | `mentions` | string[] | Phones or JIDs to @mention. Put `@<number>` in `text` where each should show. |
 | `reaction` | `{messageId, emoji, fromMe?, participant?}` | React to a message. `emoji: ""` removes the reaction. |
+| `poll` | `{name, options[], multiple?}` | Send a poll. `options`: 2 to 12 distinct choices, up to 100 characters each. `multiple: true` lets people pick more than one (default: one). Sent on its own, without `text` or `mediaUrl`. Votes are not reported in webhooks yet. |
 | `typing` | boolean | Show "typing…" briefly before the text. Default `true`. |
 
-Give `text`, `mediaUrl`, `reaction` or a mix. Media follows the same rules as text: 24 hour window, no delay, not counted toward the daily cap. `GET /api/health` lists `"reply-media"` under `features` on servers that accept media here.
+Give `text`, `mediaUrl`, `poll`, `reaction` or a mix. Media follows the same rules as text: 24 hour window, no delay, not counted toward the daily cap. `GET /api/health` lists `"reply-media"` under `features` on servers that accept media here, and `"reply-poll"` on servers that accept `poll`.
 
 ```bash
 curl -X POST https://<tenant>.wabridge.co.in/api/reply \

@@ -90,6 +90,31 @@ describe('POST /api/reply with media', () => {
   });
 });
 
+describe('POST /api/reply with a poll', () => {
+  it('sends a single-choice poll', async () => {
+    const { db, sent, post } = setup();
+    recordInbound(db, JID, null);
+    const res = await post({
+      chatId: JID,
+      poll: { name: 'Pick one', options: ['A', 'B', 'C'] },
+    });
+    expect(res.status).toBe(200);
+    expect(sent[0].content).toEqual({
+      poll: { name: 'Pick one', values: ['A', 'B', 'C'], selectableCount: 1 },
+    });
+  });
+
+  it('rejects duplicate options, one option, and a poll with text', async () => {
+    const { db, post } = setup();
+    recordInbound(db, JID, null);
+    expect((await post({ chatId: JID, poll: { name: 'q', options: ['A', 'A'] } })).status).toBe(400);
+    expect((await post({ chatId: JID, poll: { name: 'q', options: ['A'] } })).status).toBe(400);
+    expect(
+      (await post({ chatId: JID, text: 'hi', poll: { name: 'q', options: ['A', 'B'] } })).status,
+    ).toBe(400);
+  });
+});
+
 describe('buildMessagePayload', () => {
   it('builds text, video and audio', () => {
     expect(buildMessagePayload('hi')).toEqual({ text: 'hi' });
