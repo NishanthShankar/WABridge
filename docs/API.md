@@ -16,6 +16,8 @@ X-API-Key: sk_your_key_here
 curl -H "X-API-Key: sk_..." https://<tenant>.wabridge.co.in/api/docs
 ```
 
+Only some sections: `GET /api/docs?section=polls,reply-lane` (comma-separated ids; the base URL and auth intro are always included). The ids come from the `##` headings: `GET /api/docs/sections` lists them as `{ "sections": [{ "id", "title", "source", "bytes" }] }`, where `source` is `core` or the extension's package name. An unknown id answers `404 unknown_section` with the list of valid ids.
+
 ---
 
 ## Quick Examples
