@@ -1008,6 +1008,8 @@ Answer a chat that wrote to this account in the last 24 hours, with text, media 
 | `reaction` | `{messageId, emoji, fromMe?, participant?}` | React to a message. `emoji: ""` removes the reaction. |
 | `poll` | object | Send a poll. Sent on its own, without `text` or `mediaUrl`. See [Polls](#polls). |
 | `typing` | boolean | Show "typing…" briefly before the text. Default `true`. |
+| `dontSkip` | boolean | ⚠️ Outside the 24 hour window, queue this instead of answering `409`. **Read [Outside the window](#outside-the-window-dontskip-and-forcepoll) first.** |
+| `forcePoll` | boolean | ⚠️ Outside the window, send `poll` as a real poll (queued). **Read [Outside the window](#outside-the-window-dontskip-and-forcepoll) first.** |
 
 Give `text`, `mediaUrl`, `poll`, `reaction` or a mix. Media follows the same rules as text: 24 hour window, no delay, not counted toward the daily cap. `GET /api/health` lists `"reply-media"` under `features` on servers that accept media here, and `"reply-poll"` on servers that accept `poll`.
 
@@ -1039,6 +1041,32 @@ Every answer, including `409` and `429`, carries the chat's window:
 ```
 
 Any message, poll vote, reaction, edit or delete from the chat reopens it. In a group, any member's activity opens it for the whole group.
+
+### Outside the window: `dontSkip` and `forcePoll`
+
+> ⚠️ **Use these carefully, and check with the account's owner before turning them on.**
+> They send to people who have not written to this number in the last 24 hours. That is what gets WhatsApp numbers reported and banned: a person who didn't expect the message taps "Block" or "Report", and a few of those can lose the number for good. The 24 hour rule is WABridge's own safety rule, not WhatsApp's, so nothing else stops you. Only use these for people who know this number and expect to hear from it, never for cold lists, and never in a loop over many chats.
+
+Without either flag, a chat outside the window gets `409 outside_reply_window`, as before. Inside the window both flags do nothing: the reply is sent at once as usual.
+
+| Flag | Outside the window |
+|---|---|
+| `dontSkip: true` | The message goes through the queued route (`POST /api/messages`): a random 2-8 s delay, and it counts toward `rate_limit.daily_cap`. Text and media are sent as they are. A `poll` is sent as **numbered text** ("1. A / 2. B / Reply with the number of your choice."), because the real poll is not sent without `forcePoll`. |
+| `forcePoll: true` | The `poll` is sent as a **real poll** through the same queue. Votes work as usual (`poll.vote`, `GET /api/polls/:id`). **Only allowed for chats that have written to this account before**, at any time; otherwise `403 force_poll_not_allowed`. Needs `poll`. |
+
+When queued:
+
+- `reaction`, `quote`, `mentions` and `typing` are dropped, and the response lists them in `dropped`. A reaction alone can't be queued (`409`).
+- The response is `202`:
+
+```json
+{ "queued": true, "messageId": null, "scheduledMessageId": "8f1c...", "chatId": "919812345678@s.whatsapp.net",
+  "sentAs": "poll", "dropped": [], "replyWindow": { "open": false, ... }, "rateLimit": { ... } }
+```
+
+- `sentAs` is `text`, `media`, `poll` or `pollAsText`. `messageId` is `null` because nothing has been sent yet. Follow it with `GET /api/messages/:scheduledMessageId`; once sent, its `whatsappMessageId` is the WhatsApp id (for a poll, the poll id used by `GET /api/polls/:id`). A queued poll shows in `/api/messages` with `mediaType: "poll"` and the poll as JSON in `content`.
+- Over the daily cap: `429 daily_cap_reached`. A group must be in the local list (`POST /api/groups/sync`), or `409 group_not_synced`.
+- Queued sends don't count toward the per-chat reply limit; they count toward the daily cap instead.
 
 ### GET /api/reply/window
 
@@ -1094,7 +1122,7 @@ Sent to catch-all webhooks with `allEvents`.
 
 ## Polls
 
-Send a poll with `POST /api/reply` (so the 24 hour window applies). Votes come back decrypted as `poll.vote` webhooks, and the bridge can respond to each vote by itself. `GET /api/health` lists `"poll-votes"` under `features` on servers with this.
+Send a poll with `POST /api/reply` (so the 24 hour window applies; to reach a chat outside it, see `forcePoll` under [Outside the window](#outside-the-window-dontskip-and-forcepoll), and use it carefully). Votes come back decrypted as `poll.vote` webhooks, and the bridge can respond to each vote by itself. `GET /api/health` lists `"poll-votes"` under `features` on servers with this.
 
 ```json
 {

@@ -1,5 +1,6 @@
 import { zValidator } from '@hono/zod-validator';
 import type { WAMessage } from '@whiskeysockets/baileys';
+import type { Queue } from 'bullmq';
 import { Hono } from 'hono';
 import { chatCandidates, replyWindow } from '../chats/chat-state.js';
 import { getContext } from '../context.js';
@@ -7,6 +8,7 @@ import { sendPoll } from '../polls/polls.js';
 import { buildMessagePayload } from '../scheduler/message-payload.js';
 import { REPLY_WINDOW_MS } from '../webhooks/chat-activity.js';
 import { toJid } from '../webhooks/jid.js';
+import { queueOutsideWindow } from './reply-queue.js';
 import { replySchema } from './reply.schema.js';
 
 /**
@@ -24,11 +26,11 @@ const REACTION_WEIGHT = 0.25;
  * URL) at once (no queue, no random 2-8 s delay) and
  * does not count toward rate_limit.daily_cap, because the other side started the conversation.
  * A chat that has not written in 24 hours gets 409 outside_reply_window: use POST /api/messages,
- * which is queued and capped.
+ * which is queued and capped, or set dontSkip / forcePoll to have it queued from here.
  *
  * Answers are not stored in scheduled_messages. Message text is never logged.
  */
-export function createReplyRouter() {
+export function createReplyRouter(queue?: Queue) {
   const router = new Hono();
   const recent = new Map<string, Array<{ t: number; w: number }>>();
 
@@ -59,6 +61,16 @@ export function createReplyRouter() {
     // A 1:1 chat may have written from its LID or its phone JID; either opens the window.
     const candidates = await chatCandidates(getSocket(), jid);
     const window = replyWindow(db, candidates);
+    if (!window.open && (input.dontSkip || input.forcePoll)) {
+      const queued = await queueOutsideWindow({
+        ctx: getContext(c),
+        queue,
+        jid,
+        input,
+        window,
+      });
+      return c.json(queued.body, queued.status);
+    }
     if (!window.open) {
       return c.json(
         {
@@ -78,7 +90,9 @@ export function createReplyRouter() {
       (input.reaction ? REACTION_WEIGHT : 0);
     const bucketKey = `${tenantId}|${jid}`;
     const now = Date.now();
-    const used = (recent.get(bucketKey) ?? []).filter((e) => now - e.t < 60_000);
+    const used = (recent.get(bucketKey) ?? []).filter(
+      (e) => now - e.t < 60_000,
+    );
     const total = used.reduce((sum, e) => sum + e.w, 0);
     if (total + weight > PER_CHAT_PER_MINUTE) {
       const oldest = used[0]?.t ?? now;
@@ -86,7 +100,10 @@ export function createReplyRouter() {
         {
           error: 'too_many_replies',
           message: 'Slow down: too many answers to this chat',
-          retryAfterSeconds: Math.max(1, Math.ceil((oldest + 60_000 - now) / 1000)),
+          retryAfterSeconds: Math.max(
+            1,
+            Math.ceil((oldest + 60_000 - now) / 1000),
+          ),
           replyWindow: window,
         },
         429,

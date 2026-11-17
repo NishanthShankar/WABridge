@@ -128,7 +128,7 @@ export function createApp(plugin: ServerPlugin, messageQueue: Queue, extensions:
   app.route('/api/webhooks', createWebhooksRouter());
 
   // Reply API: uncapped answers inside the 24 hour window after a chat wrote
-  app.route('/api/reply', createReplyRouter());
+  app.route('/api/reply', createReplyRouter(messageQueue));
   app.route('/api/polls', createPollsRouter());
   app.route('/api/chats', createChatsRouter());
 

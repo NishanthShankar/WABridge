@@ -52,8 +52,24 @@ export const replySchema = z
           .optional(),
       })
       .optional(),
-    /** Show "typing…"for a moment before the text. Default true. */
+    /** Show "typing…" for a moment before the text. Default true. */
     typing: z.boolean().optional(),
+    /**
+     * Outside the 24 hour window, queue this through POST /api/messages (2-8 s delay, counts
+     * toward the daily cap) instead of answering 409. A poll is sent as numbered text unless
+     * forcePoll is set. reaction, quote, mentions and typing are dropped when queued.
+     * Use with care: see the docs.
+     */
+    dontSkip: z.boolean().optional(),
+    /**
+     * Outside the window, send the poll as a real poll (queued, like dontSkip). Only for chats
+     * that have written to this account before. Use with care: see the docs.
+     */
+    forcePoll: z.boolean().optional(),
+  })
+  .refine((v) => !v.forcePoll || !!v.poll, {
+    message: 'forcePoll needs a poll',
+    path: ['forcePoll'],
   })
   .refine((v) => !!v.chatId !== !!v.phone, {
     message: 'Give exactly one of chatId or phone',

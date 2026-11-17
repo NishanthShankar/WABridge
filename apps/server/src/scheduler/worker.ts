@@ -1,8 +1,14 @@
 import { Worker } from 'bullmq';
-import { eq, and, inArray, sql } from 'drizzle-orm';
-import { scheduledMessages, contacts, groups, recurringRules } from '../db/schema.js';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { AppConfig } from '../config/schema.js';
 import type { AppContext } from '../context.js';
+import {
+  contacts,
+  groups,
+  recurringRules,
+  scheduledMessages,
+} from '../db/schema.js';
+import { type PollInput, sendPoll } from '../polls/polls.js';
 import { buildMessagePayload } from './message-payload.js';
 
 /**
@@ -41,11 +47,19 @@ export function createMessageWorker(
       if (job.name === 'send') {
         const ctx = resolveContext(job.data as Record<string, unknown>);
         if (!ctx) return; // Context not found (e.g., tenant deleted)
-        await processSendJob(ctx, config, job.data.scheduledMessageId as string);
+        await processSendJob(
+          ctx,
+          config,
+          job.data.scheduledMessageId as string,
+        );
       } else if (job.name === 'recurring-send') {
         const ctx = resolveContext(job.data as Record<string, unknown>);
         if (!ctx) return;
-        await processRecurringSendJob(ctx, config, job.data.recurringRuleId as string);
+        await processRecurringSendJob(
+          ctx,
+          config,
+          job.data.recurringRuleId as string,
+        );
       } else if (job.name === 'cleanup') {
         const ctx = resolveContext(job.data as Record<string, unknown>);
         if (ctx) {
@@ -75,7 +89,8 @@ export function createMessageWorker(
 
     try {
       const now = new Date();
-      ctx.db.update(scheduledMessages)
+      ctx.db
+        .update(scheduledMessages)
         .set({
           status: 'failed',
           failedAt: now,
@@ -176,16 +191,32 @@ async function processSendJob(
     throw new Error('WhatsApp not connected');
   }
 
-  // Send message via Baileys (with optional media)
-  const payload = buildMessagePayload(msg.content, msg.mediaUrl, msg.mediaType);
-  const result = await sock.sendMessage(jid, payload);
+  // Send message via Baileys (with optional media). A queued poll keeps its definition as
+  // JSON in content and is sent with sendPoll, so its votes can be read like any other poll.
+  let sentId: string | null;
+  if (msg.mediaType === 'poll') {
+    sentId = await sendPoll(
+      sock,
+      db,
+      jid,
+      JSON.parse(msg.content) as PollInput,
+    );
+  } else {
+    const payload = buildMessagePayload(
+      msg.content,
+      msg.mediaUrl,
+      msg.mediaType,
+    );
+    const result = await sock.sendMessage(jid, payload);
+    sentId = result?.key?.id ?? null;
+  }
 
   // Update SQLite with success
   const now = new Date();
   db.update(scheduledMessages)
     .set({
       status: 'sent',
-      whatsappMessageId: result?.key?.id ?? null,
+      whatsappMessageId: sentId,
       sentAt: now,
       attempts: msg.attempts + 1,
       updatedAt: now,
@@ -314,7 +345,11 @@ async function processRecurringSendJob(
   const jid = contact.phone.replace('+', '') + '@s.whatsapp.net';
 
   // Send message via Baileys (with optional media)
-  const payload = buildMessagePayload(rule.content, rule.mediaUrl, rule.mediaType);
+  const payload = buildMessagePayload(
+    rule.content,
+    rule.mediaUrl,
+    rule.mediaType,
+  );
   const result = await sock.sendMessage(jid, payload);
 
   // Update the scheduled message record
@@ -367,7 +402,8 @@ function processCleanupJob(ctx: AppContext, config: AppConfig): void {
 
   const cutoff = new Date(Date.now() - retentionDays * 86400000);
 
-  ctx.db.delete(scheduledMessages)
+  ctx.db
+    .delete(scheduledMessages)
     .where(
       and(
         sql`${scheduledMessages.sentAt} < ${cutoff}`,
