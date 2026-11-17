@@ -65,7 +65,13 @@ export async function createGroup(
   db: Database,
   sock: WASocket,
   cap: number,
-  input: { name: string; participants: string[]; description?: string; settings?: GroupSettingsInput },
+  input: {
+    name: string;
+    participants: string[];
+    description?: string;
+    settings?: GroupSettingsInput;
+    pictureUrl?: string;
+  },
 ) {
   const { key, count } = createdToday(db);
   if (count >= cap) throw new GroupCapError(`Daily group creation cap reached (${count}/${cap})`);
@@ -109,12 +115,24 @@ export async function createGroup(
   // Permissions are applied after creating: a failure here doesn't undo the group, it's reported.
   const settings = input.settings ? await applyGroupSettings(sock, meta.id, input.settings) : null;
 
+  // Same for the picture: reported, never fatal.
+  let picture: { set: boolean; error?: string } | null = null;
+  if (input.pictureUrl) {
+    try {
+      await setGroupPicture(sock, meta.id, input.pictureUrl);
+      picture = { set: true };
+    } catch (err) {
+      picture = { set: false, error: (err as Error).message };
+    }
+  }
+
   return {
     id: meta.id,
     name: meta.subject ?? input.name,
     participants,
     inviteLink: await inviteLink(sock, meta.id),
     ...(settings ? { settings } : {}),
+    ...(picture ? { picture } : {}),
   };
 }
 
@@ -188,3 +206,65 @@ export async function updateParticipants(
 }
 
 export { inviteLink };
+
+/** Rename a group and/or change its description, and keep the local copy in step. */
+export async function updateGroupInfo(
+  db: Database,
+  sock: WASocket,
+  jid: string,
+  input: { name?: string; description?: string },
+) {
+  const applied: Array<'name' | 'description'> = [];
+  const failed: Array<{ field: 'name' | 'description'; error: string }> = [];
+  if (input.name !== undefined) {
+    try {
+      await sock.groupUpdateSubject(jid, input.name);
+      applied.push('name');
+    } catch (err) {
+      failed.push({ field: 'name', error: (err as Error).message });
+    }
+  }
+  if (input.description !== undefined) {
+    try {
+      // undefined removes the description in WhatsApp
+      await sock.groupUpdateDescription(jid, input.description || undefined);
+      applied.push('description');
+    } catch (err) {
+      failed.push({ field: 'description', error: (err as Error).message });
+    }
+  }
+  const set: Partial<typeof groups.$inferInsert> = { updatedAt: new Date() };
+  if (applied.includes('name')) set.name = input.name;
+  if (applied.includes('description')) set.description = input.description || null;
+  if (applied.length) db.update(groups).set(set).where(eq(groups.id, jid)).run();
+  return { applied, failed };
+}
+
+const MAX_PICTURE_BYTES = 5 * 1024 * 1024;
+
+/** Download an image (http/https only, at most 5 MB, must be an image). */
+export async function fetchImage(url: string, fetchImpl: typeof fetch = fetch): Promise<Buffer> {
+  if (!/^https?:\/\//i.test(url)) throw Object.assign(new Error('URL must be http or https'), { statusCode: 400 });
+  const res = await fetchImpl(url, { signal: AbortSignal.timeout(20_000), redirect: 'follow' });
+  if (!res.ok) throw Object.assign(new Error(`Image download failed: HTTP ${res.status}`), { statusCode: 422 });
+  const type = res.headers.get('content-type') ?? '';
+  if (type && !type.startsWith('image/'))
+    throw Object.assign(new Error(`Not an image (content-type ${type})`), { statusCode: 422 });
+  const declared = Number(res.headers.get('content-length') ?? 0);
+  if (declared > MAX_PICTURE_BYTES) throw Object.assign(new Error('Image is larger than 5 MB'), { statusCode: 422 });
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length > MAX_PICTURE_BYTES) throw Object.assign(new Error('Image is larger than 5 MB'), { statusCode: 422 });
+  if (buf.length === 0) throw Object.assign(new Error('Image is empty'), { statusCode: 422 });
+  return buf;
+}
+
+/** Set a group's picture from an image URL. WhatsApp crops it to a square. */
+export async function setGroupPicture(
+  sock: WASocket,
+  jid: string,
+  url: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const image = await fetchImage(url, fetchImpl);
+  await sock.updateProfilePicture(jid, image);
+}

@@ -35,6 +35,13 @@ export const createGroupSchema = z.object({
   description: z.string().max(512).optional(),
   /** Permissions to set right after creating it (see groupSettingsSchema). */
   settings: groupSettingsFields.optional(),
+  /** Group picture to set right after creating it: public http(s) image URL. */
+  pictureUrl: z
+    .string()
+    .url()
+    .max(2048)
+    .refine((u) => /^https?:\/\//i.test(u), { message: 'pictureUrl must be http or https' })
+    .optional(),
 });
 
 export const updateParticipantsSchema = z
@@ -47,3 +54,23 @@ export const updateParticipantsSchema = z
   .refine((v) => v.add?.length || v.remove?.length || v.promote?.length || v.demote?.length, {
     message: 'Give add, remove, promote or demote',
   });
+
+/** PATCH /api/groups/:id: rename and/or change the description. description "" clears it. */
+export const updateGroupInfoSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100).optional(),
+    description: z.string().max(2048).optional(),
+  })
+  .refine((v) => v.name !== undefined || v.description !== undefined, {
+    message: 'Give name, description or both',
+  });
+
+/** PUT /api/groups/:id/picture */
+export const groupPictureSchema = z.object({
+  /** Public http(s) URL of a JPEG, PNG or WebP image. It is cropped to a square. */
+  imageUrl: z
+    .string()
+    .url()
+    .max(2048)
+    .refine((u) => /^https?:\/\//i.test(u), { message: 'imageUrl must be http or https' }),
+});

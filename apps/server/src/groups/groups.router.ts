@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
-import { createGroupSchema, groupSettingsSchema, listGroupsSchema, updateParticipantsSchema } from './groups.schema.js';
-import { applyGroupSettings, createGroup, GroupCapError, inviteLink, readGroupSettings, updateParticipants } from './group-admin.js';
+import { createGroupSchema, groupPictureSchema, groupSettingsSchema, listGroupsSchema, updateGroupInfoSchema, updateParticipantsSchema } from './groups.schema.js';
+import { applyGroupSettings, createGroup, GroupCapError, inviteLink, readGroupSettings, setGroupPicture, updateGroupInfo, updateParticipants } from './group-admin.js';
 import { createGroupsService } from './groups.service.js';
 import { getContext } from '../context.js';
 import { jidToPhone, ownJids } from '../webhooks/jid.js';
@@ -19,6 +19,9 @@ import { jidToPhone, ownJids } from '../webhooks/jid.js';
  * - GET /:id/invite — The group's invite link (this account must be admin)
  * - GET /:id/settings — Who can add members, edit group info, send messages
  * - PATCH /:id/settings — Change those (this account must be admin)
+ * - PATCH /:id — Rename and/or change the description
+ * - PUT /:id/picture — Set the group picture from an image URL
+ * - DELETE /:id/picture — Remove the group picture
  */
 export function createGroupsRouter() {
   const router = new Hono();
@@ -83,6 +86,51 @@ export function createGroupsRouter() {
     if (result.applied.length === 0)
       return c.json({ error: 'settings_not_changed', message: 'WhatsApp refused every change (is this account an admin?)', ...result, settings }, 502);
     return c.json({ id, ...result, settings });
+  });
+
+  // RENAME / description
+  router.patch('/:id', zValidator('json', updateGroupInfoSchema), async (c) => {
+    const { db, getSocket } = getContext(c);
+    const sock = getSocket();
+    if (!sock) return c.json({ error: 'WhatsApp not connected' }, 503);
+    const id = c.req.param('id');
+    if (!id.endsWith('@g.us')) return c.json({ error: 'Not a group JID' }, 400);
+    const result = await updateGroupInfo(db, sock, id, c.req.valid('json'));
+    if (result.applied.length === 0)
+      return c.json({ error: 'not_changed', message: 'WhatsApp refused every change (is this account allowed to edit group info?)', ...result }, 502);
+    return c.json({ id, ...result });
+  });
+
+  // PICTURE: set from an image URL
+  router.put('/:id/picture', zValidator('json', groupPictureSchema), async (c) => {
+    const { getSocket } = getContext(c);
+    const sock = getSocket();
+    if (!sock) return c.json({ error: 'WhatsApp not connected' }, 503);
+    const id = c.req.param('id');
+    if (!id.endsWith('@g.us')) return c.json({ error: 'Not a group JID' }, 400);
+    try {
+      await setGroupPicture(sock, id, c.req.valid('json').imageUrl);
+    } catch (err) {
+      const status = (err as { statusCode?: number }).statusCode === 422 ? 422 : (err as { statusCode?: number }).statusCode === 400 ? 400 : 502;
+      return c.json({ error: 'picture_not_set', message: (err as Error).message }, status);
+    }
+    const pictureUrl = await sock.profilePictureUrl(id, 'image').catch(() => null);
+    return c.json({ id, set: true, pictureUrl: pictureUrl ?? null });
+  });
+
+  // PICTURE: remove
+  router.delete('/:id/picture', async (c) => {
+    const { getSocket } = getContext(c);
+    const sock = getSocket();
+    if (!sock) return c.json({ error: 'WhatsApp not connected' }, 503);
+    const id = c.req.param('id');
+    if (!id.endsWith('@g.us')) return c.json({ error: 'Not a group JID' }, 400);
+    try {
+      await sock.removeProfilePicture(id);
+    } catch (err) {
+      return c.json({ error: 'picture_not_removed', message: (err as Error).message }, 502);
+    }
+    return c.json({ id, removed: true });
   });
 
   // INVITE link

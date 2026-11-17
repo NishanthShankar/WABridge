@@ -1163,8 +1163,11 @@ Create a group from this account, which becomes its admin. Capped per day (IST) 
 
 ```json
 { "name": "Flat 4B", "participants": ["+91 98123 45678", "919988776655"], "description": "optional",
+  "pictureUrl": "https://example.com/flat4b.jpg",
   "settings": { "membersCanAdd": false, "membersCanEditInfo": false } }
 ```
+
+`pictureUrl` is optional: a public http(s) image set as the group picture right after creating it. The response then carries `"picture": { "set": true }` or `{ "set": false, "error": "..." }`; a failed picture doesn't undo the group.
 
 `settings` is optional: the same fields as `PATCH /api/groups/:id/settings` below, applied right after the group is created. The response then also carries `"settings": { "applied": [...], "failed": [...] }`. A refused setting doesn't undo the group.
 
@@ -1228,7 +1231,31 @@ Response: `{ "id", "applied": ["membersCanAdd", "membersCanEditInfo"], "failed":
 
 `membersCanAdd: false` only holds while the members are not admins: anyone you promote can add people again. People can still join through the invite link.
 
-`/api/health` lists `group-create` and `group-settings` when these exist.
+### PATCH /api/groups/:id
+
+Rename the group and/or change its description.
+
+```json
+{ "name": "Flat 4B (2027)", "description": "Rent due on the 5th" }
+```
+
+Either field alone is fine. `"description": ""` removes the description. Response: `{ "id", "applied": ["name", "description"], "failed": [] }`. If WhatsApp refused every change, the answer is `502 not_changed` with the same fields. This account must be an admin, unless `membersCanEditInfo` is `true`. Everyone in the group sees "<this number> changed the group name".
+
+### PUT /api/groups/:id/picture
+
+Set the group picture from an image URL.
+
+```json
+{ "imageUrl": "https://example.com/flat4b.jpg" }
+```
+
+The bridge downloads the image (http or https, a JPEG, PNG or WebP, at most 5 MB) and WhatsApp crops it to a square, so put the subject in the middle. Response: `{ "id", "set": true, "pictureUrl": "https://pps.whatsapp.net/..." }`. Errors: `422 picture_not_set` when the URL isn't a reachable image or is too big, `502 picture_not_set` when WhatsApp refused (usually: not an admin and `membersCanEditInfo` is `false`). The same admin rule applies as for renaming.
+
+### DELETE /api/groups/:id/picture
+
+Remove the group picture. Response: `{ "id", "removed": true }`.
+
+`/api/health` lists `group-create`, `group-settings` and `group-info` when these exist.
 
 ## Multiuser tenants
 
