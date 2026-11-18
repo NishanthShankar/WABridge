@@ -27,6 +27,8 @@ export interface PollInput {
   react?: string | false;
   /** Text sent after a counted vote, or false for none. {{option}} and {{poll}} are filled in. */
   confirmText?: string | false;
+  /** Privacy: never store what anyone voted. See stealth-inbox.ts. */
+  stealth?: boolean;
 }
 
 export const DEFAULT_REACTION = '👍';
@@ -82,6 +84,7 @@ export async function sendPoll(
       react: b.react,
       confirmText: b.confirmText,
       secret: secret.toString('base64'),
+      stealth: !!input.stealth,
       createdAt: new Date(),
     })
     .run();
@@ -180,7 +183,7 @@ export function judgeVote(
     (v) =>
       v.counted &&
       v.note !== 'settling' &&
-      (JSON.parse(v.selected) as string[]).length > 0,
+      (v.note === 'hidden' || (JSON.parse(v.selected) as string[]).length > 0),
   );
   if (poll.mode === 'updateEveryTime')
     return { counted: true, note: null, first: !hadCounted };
@@ -218,6 +221,24 @@ export async function deletePoll(
 /** Each voter's latest counted choice, and a tally per option. */
 export function summarisePoll(poll: PollRow, votes: VoteRow[]) {
   const options = JSON.parse(poll.options) as string[];
+  if (poll.stealth) {
+    // Answers were never stored. Only how many people voted, in lock modes.
+    return {
+      id: poll.id,
+      chatId: poll.chatJid,
+      name: poll.name,
+      options,
+      multiple: poll.selectableCount === 0,
+      mode: poll.mode,
+      react: poll.react,
+      confirmText: poll.confirmText,
+      stealth: true,
+      createdAt: poll.createdAt.toISOString(),
+      deletedAt: poll.deletedAt?.toISOString() ?? null,
+      results: null,
+      votes: [],
+    };
+  }
   const latest = new Map<string, VoteRow>();
   for (const v of votes) if (v.counted) latest.set(v.voterJid, v);
   const tally: Record<string, number> = Object.fromEntries(
@@ -242,6 +263,7 @@ export function summarisePoll(poll: PollRow, votes: VoteRow[]) {
     mode: poll.mode,
     react: poll.react,
     confirmText: poll.confirmText,
+    stealth: false,
     createdAt: poll.createdAt.toISOString(),
     deletedAt: poll.deletedAt?.toISOString() ?? null,
     results: { tally, voters },
@@ -316,9 +338,19 @@ function votePayload(
   verdict: { counted: boolean; note: string | null },
   deleted: boolean,
 ) {
-  const mine = votesFor(db, poll.id)
-    .filter((v) => v.voterJid === voter && v.counted)
-    .at(-1);
+  const mine = poll.stealth
+    ? undefined
+    : votesFor(db, poll.id)
+        .filter((v) => v.voterJid === voter && v.counted)
+        .at(-1);
+  // A stealth poll keeps no answers, so "current" is only known when this vote is the final one.
+  const current = poll.stealth
+    ? verdict.counted && !verdict.note
+      ? selected
+      : null
+    : mine
+      ? (JSON.parse(mine.selected) as string[])
+      : [];
   return {
     event: 'poll.vote',
     pollId: poll.id,
@@ -331,8 +363,9 @@ function votePayload(
     /** null: final | settling: multi-choice, waiting for them to stop tapping | locked | poll_deleted | empty | superseded */
     note: verdict.note,
     /** What counts for this voter now (their latest counted vote) */
-    current: mine ? (JSON.parse(mine.selected) as string[]) : [],
+    current,
     pollDeleted: deleted || !!getPoll(db, poll.id)?.deletedAt,
+    stealth: poll.stealth,
   };
 }
 
@@ -380,30 +413,11 @@ export async function handlePollVote(params: {
     const key = `${pollId}|${voter}`;
     clearTimeout(settling.get(key));
     settling.delete(key);
-    db.update(pollVotes)
-      .set({ counted: false, note: 'superseded' })
-      .where(
-        and(
-          eq(pollVotes.pollId, pollId),
-          eq(pollVotes.voterJid, voter),
-          eq(pollVotes.note, 'settling'),
-        ),
-      )
-      .run();
     const note = selected.length ? 'settling' : 'empty';
-    const row = db
-      .insert(pollVotes)
-      .values({
-        pollId,
-        voterJid: voter,
-        voterPhone,
-        selected: JSON.stringify(selected),
-        counted: selected.length > 0,
-        note,
-        at: new Date(),
-      })
-      .returning({ id: pollVotes.id })
-      .get();
+    // Stealth: nothing is written while they tap; the timer below holds the choice in memory.
+    const row = poll.stealth
+      ? null
+      : settleRows(db, pollId, voter, voterPhone, selected, note);
     if (selected.length) {
       settling.set(
         key,
@@ -412,10 +426,12 @@ export async function handlePollVote(params: {
           void (async () => {
             const fresh = getPoll(db, pollId);
             if (!fresh || fresh.deletedAt) return;
-            db.update(pollVotes)
-              .set({ note: null })
-              .where(eq(pollVotes.id, row.id))
-              .run();
+            if (row)
+              db.update(pollVotes)
+                .set({ note: null })
+                .where(eq(pollVotes.id, row.id))
+                .run();
+            else recordHidden(db, fresh, voter, voterPhone);
             const deleted = await respond(sock, db, logger, fresh, selected);
             params.onSettled?.(
               votePayload(
@@ -448,20 +464,79 @@ export async function handlePollVote(params: {
     );
   }
 
-  db.insert(pollVotes)
-    .values({
-      pollId,
-      voterJid: voter,
-      voterPhone,
-      selected: JSON.stringify(selected),
-      counted: verdict.counted,
-      note: verdict.note,
-      at: new Date(),
-    })
-    .run();
+  if (poll.stealth) {
+    if (verdict.counted) recordHidden(db, poll, voter, voterPhone);
+  } else {
+    db.insert(pollVotes)
+      .values({
+        pollId,
+        voterJid: voter,
+        voterPhone,
+        selected: JSON.stringify(selected),
+        counted: verdict.counted,
+        note: verdict.note,
+        at: new Date(),
+      })
+      .run();
+  }
 
   const deleted = verdict.counted
     ? await respond(sock, db, logger, poll, selected)
     : false;
   return votePayload(db, poll, voter, voterPhone, selected, verdict, deleted);
+}
+
+/** Supersede a voter's settling rows and add this tap as the new settling row. */
+function settleRows(
+  db: Database,
+  pollId: string,
+  voter: string,
+  voterPhone: string | null,
+  selected: string[],
+  note: string,
+): { id: number } {
+  db.update(pollVotes)
+    .set({ counted: false, note: 'superseded' })
+    .where(
+      and(
+        eq(pollVotes.pollId, pollId),
+        eq(pollVotes.voterJid, voter),
+        eq(pollVotes.note, 'settling'),
+      ),
+    )
+    .run();
+  return db
+    .insert(pollVotes)
+    .values({
+      pollId,
+      voterJid: voter,
+      voterPhone,
+      selected: JSON.stringify(selected),
+      counted: selected.length > 0,
+      note,
+      at: new Date(),
+    })
+    .returning({ id: pollVotes.id })
+    .get();
+}
+
+/** A stealth vote that counts: remember that they voted (for locks), never what. */
+function recordHidden(
+  db: Database,
+  poll: PollRow,
+  voter: string,
+  voterPhone: string | null,
+): void {
+  if (poll.mode === 'updateEveryTime') return; // nothing to lock, so nothing to keep
+  db.insert(pollVotes)
+    .values({
+      pollId: poll.id,
+      voterJid: voter,
+      voterPhone,
+      selected: '[]',
+      counted: true,
+      note: 'hidden',
+      at: new Date(),
+    })
+    .run();
 }

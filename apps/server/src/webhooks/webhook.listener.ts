@@ -12,9 +12,10 @@ import type {
   WAMessageKey,
 } from '@whiskeysockets/baileys';
 import type { Logger } from 'pino';
-import type { createDatabase } from '../db/client.js';
 import { setupChatStateListener } from '../chats/chat-state.js';
+import type { createDatabase } from '../db/client.js';
 import { handlePollVote } from '../polls/polls.js';
+import { ackVote, holdVote } from '../polls/stealth-inbox.js';
 import { recordInbound } from './chat-activity.js';
 import { type GroupCache, createGroupCache } from './group-cache.js';
 import { isGroupJid, jidToPhone, ownJids } from './jid.js';
@@ -193,6 +194,18 @@ async function handleMessage(
   if (content.pollUpdateMessage) {
     const hooksFor = (): Webhook[] =>
       isGroup ? service.getAllEvents() : service.getByPhone(senderPhone);
+    // A stealth poll's vote lives only in memory until a webhook takes it (2xx) or the client
+    // acknowledges it through /api/polls/pending.
+    const deliverVote = (payload: Record<string, unknown>) => {
+      if (!payload.stealth) {
+        for (const hook of hooksFor()) fireWebhook(hook, payload, logger);
+        return;
+      }
+      const held = holdVote(db, payload);
+      const voteId = held.voteId as string;
+      for (const hook of hooksFor())
+        fireWebhook(hook, held, logger, undefined, () => ackVote(db, voteId));
+    };
     const vote = await handlePollVote({
       sock,
       db,
@@ -202,14 +215,16 @@ async function handleMessage(
       voterAltJid: altJid,
       voterPhone: senderPhone,
       // A multi-choice vote that became final after the voter stopped tapping
-      onSettled: (settled) => {
-        const payload = { ...base, timestamp: new Date().toISOString(), ...settled, messageId: key.id };
-        for (const hook of hooksFor()) fireWebhook(hook, payload, logger);
-      },
+      onSettled: (settled) =>
+        deliverVote({
+          ...base,
+          timestamp: new Date().toISOString(),
+          ...settled,
+          messageId: key.id,
+        }),
     });
     if (!vote) return;
-    const payload = { ...base, ...vote, messageId: key.id };
-    for (const hook of hooksFor()) fireWebhook(hook, payload, logger);
+    deliverVote({ ...base, ...vote, messageId: key.id });
     return;
   }
 
@@ -527,6 +542,8 @@ export function fireWebhook(
   payload: object,
   logger: Logger,
   onActions?: (actions: ReplyActions) => Promise<void>,
+  /** Called once the receiver answers 2xx */
+  onDelivered?: () => void,
 ): void {
   const { url, secret } = webhook;
   const body = JSON.stringify(payload);
@@ -555,7 +572,11 @@ export function fireWebhook(
           'Webhook responded with error',
         );
         retry = res.status === 429 || res.status >= 500;
-      } else if (
+      } else {
+        onDelivered?.();
+      }
+      if (
+        res.ok &&
         onActions &&
         (res.headers.get('content-type') ?? '').includes('application/json')
       ) {

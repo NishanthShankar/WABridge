@@ -1051,8 +1051,8 @@ Without either flag, a chat outside the window gets `409 outside_reply_window`, 
 
 | Flag | Outside the window |
 |---|---|
-| `dontSkip: true` | The message goes through the queued route (`POST /api/messages`): a random 2-8 s delay, and it counts toward `rate_limit.daily_cap`. Text and media are sent as they are. A `poll` is sent as **numbered text** ("1. A / 2. B / Reply with the number of your choice."), because the real poll is not sent without `forcePoll`. |
-| `forcePoll: true` | The `poll` is sent as a **real poll** through the same queue. Votes work as usual (`poll.vote`, `GET /api/polls/:id`). **Only allowed for chats that have written to this account before**, at any time; otherwise `403 force_poll_not_allowed`. Needs `poll`. |
+| `dontSkip: true` | The message goes through the queued route (`POST /api/messages`): a random 2-8 s delay, and it counts toward `rate_limit.daily_cap`. Text and media are sent as they are. A `poll` is sent as a **real poll** if the chat has written to this account before (at any time, same rule as `forcePoll`), and as **numbered text** ("1. A / 2. B / Reply with the number of your choice.") to anyone else. |
+| `forcePoll: true` | The `poll` is sent as a **real poll** through the same queue. Votes work as usual (`poll.vote`, `GET /api/polls/:id`). **Only allowed for chats that have written to this account before**, at any time; otherwise `403 force_poll_not_allowed`, so a chat that never wrote is never sent a poll by mistake. Needs `poll`. Use it when you would rather get an error than numbered text. |
 
 When queued:
 
@@ -1146,6 +1146,7 @@ Send a poll with `POST /api/reply` (so the 24 hour window applies; to reach a ch
 | `mode` | string | What a vote does. `updateEveryTime` (default), `lockFirstVote` or `deleteAfterVote`. See below. |
 | `react` | string \| `false` | Emoji the bridge reacts to the poll with after a vote that counts. Default `👍`. `false` turns it off. Not used by `deleteAfterVote`. |
 | `confirmText` | string \| `false` | Message sent after a vote that counts. `{{option}}` becomes the choice (several joined with ", "), `{{poll}}` the question. Default: none, except `deleteAfterVote`, which defaults to `You chose {{option}}`. `false` turns it off. |
+| `stealth` | boolean | Privacy: answers are never written to the database or the logs. See [Stealth polls](#stealth-polls). Default `false`. |
 
 The response's `messageId` is the poll's id.
 
@@ -1192,6 +1193,33 @@ Sent to the same webhooks as messages from that chat (1:1: the sender's phone we
 - `current`: what counts for this person now. **Use this as their answer.**
 
 Only polls sent after this feature was deployed can be read: a vote is encrypted with a secret the bridge keeps when it sends the poll.
+
+### Stealth polls
+
+For questions whose answers must not be kept (health, money, anything private), send the poll with `"stealth": true`. `GET /api/health` lists `"poll-stealth"` on servers with this.
+
+- **Never written down.** The bridge decrypts each vote in memory, responds as the mode says, and hands the `poll.vote` webhook over. No answer is stored in the database, and no answer appears in the server logs.
+- **Held until you acknowledge it.** Each stealth `poll.vote` carries a `voteId` and an `expiresAt`. It is kept in memory only until it is acknowledged:
+  - A webhook that answers `2xx` acknowledges it, and it is deleted at once. Retries (2 s, then 10 s) send the same `voteId`.
+  - If no webhook took it (none registered, receiver down), fetch it with `GET /api/polls/pending` and acknowledge it with `POST /api/polls/pending/ack`.
+  - Unacknowledged votes are deleted after **1 hour**, and all of them are lost if the server restarts. Pick them up promptly.
+- **Locks still work.** In `lockFirstVote` and `deleteAfterVote` the bridge keeps one row saying *that* this person voted (with no answer), so later changes are still refused. `updateEveryTime` keeps nothing at all.
+- **What you get.** `current` is the answer only on the vote that is final for this person (`counted: true`, `note: null`); on locked, settling and other votes it is `null`, because the bridge no longer knows the earlier answer. Keep the final answer on your side.
+- **Results are not available.** `GET /api/polls/:id` returns `"stealth": true`, `"results": null` and `"votes": []`.
+- **Mind the chat itself.** `confirmText` with `{{option}}` writes the answer into the WhatsApp chat, where both phones keep it. Turn it off (`"confirmText": false`) if that matters; `deleteAfterVote` uses it by default.
+
+```json
+{ "event": "poll.vote", "pollId": "3EB0...", "stealth": true, "selected": ["Yes"], "counted": true, "note": null,
+  "current": ["Yes"], "voteId": "6c1e7a4e-...", "expiresAt": "2026-11-18T11:00:00.000Z", ... }
+```
+
+#### GET /api/polls/pending
+
+Stealth votes not yet acknowledged, oldest first. `?pollId=` for one poll. Response: `{ "votes": [ <poll.vote payload>, ... ] }`.
+
+#### POST /api/polls/pending/ack
+
+Body `{ "voteIds": ["6c1e7a4e-...", ...] }` (1 to 500). Deletes them now. Response: `{ "acked": 1, "unknown": 0 }`; `unknown` counts ids that were already gone (acknowledged, expired or lost in a restart).
 
 ### GET /api/polls/:id
 

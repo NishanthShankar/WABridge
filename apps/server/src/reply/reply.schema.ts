@@ -50,14 +50,19 @@ export const replySchema = z
         confirmText: z
           .union([z.string().min(1).max(1024), z.literal(false)])
           .optional(),
+        /**
+         * Privacy: answers are never stored in the database or logs. Each vote is held in
+         * memory until acknowledged (webhook 2xx or POST /api/polls/pending/ack), at most an hour.
+         */
+        stealth: z.boolean().optional(),
       })
       .optional(),
     /** Show "typing…" for a moment before the text. Default true. */
     typing: z.boolean().optional(),
     /**
      * Outside the 24 hour window, queue this through POST /api/messages (2-8 s delay, counts
-     * toward the daily cap) instead of answering 409. A poll is sent as numbered text unless
-     * forcePoll is set. reaction, quote, mentions and typing are dropped when queued.
+     * toward the daily cap) instead of answering 409. A poll stays a poll for chats that have
+     * written to this account before, and becomes numbered text for anyone else. reaction, quote, mentions and typing are dropped when queued.
      * Use with care: see the docs.
      */
     dontSkip: z.boolean().optional(),

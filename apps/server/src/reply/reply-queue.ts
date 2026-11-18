@@ -7,7 +7,7 @@ import { createSchedulingService } from '../scheduling/scheduling.service.js';
 import { isGroupJid, jidToPhone } from '../webhooks/jid.js';
 import type { ReplyInput } from './reply.schema.js';
 
-/** A poll written out as text, for chats outside the window when forcePoll isn't set. */
+/** A poll written out as text, for dontSkip to a chat that has never written to this account. */
 export function pollAsText(poll: {
   name: string;
   options: string[];
@@ -115,7 +115,8 @@ export async function queueOutsideWindow(params: {
     ? 'media'
     : 'text';
   if (input.poll) {
-    if (input.forcePoll) {
+    // A chat that has written to this account before gets the real poll, with dontSkip too.
+    if (input.forcePoll || window.lastInboundAt) {
       content = JSON.stringify(input.poll);
       mediaType = 'poll';
       mediaUrl = undefined;

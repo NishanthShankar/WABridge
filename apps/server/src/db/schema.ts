@@ -222,6 +222,11 @@ export const polls = sqliteTable(
     confirmText: text('confirm_text'),
     /** messageSecret of the poll (base64). Votes are encrypted with it. */
     secret: text('secret').notNull(),
+    /**
+     * Privacy: votes on this poll are never written with their answer. They are held in
+     * memory until the client acknowledges them (or a webhook answers 2xx), at most an hour.
+     */
+    stealth: integer('stealth', { mode: 'boolean' }).notNull().default(false),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     deletedAt: integer('deleted_at', { mode: 'timestamp_ms' }),
   },
@@ -240,7 +245,10 @@ export const pollVotes = sqliteTable(
     selected: text('selected').notNull(),
     /** false when the mode ignored this vote (locked, poll already deleted, ...) */
     counted: integer('counted', { mode: 'boolean' }).notNull(),
-    /** null = counts and is final. settling (multi-choice, still tapping) | locked | poll_deleted | empty | superseded */
+    /**
+     * null = counts and is final. settling (multi-choice, still tapping) | locked | poll_deleted | empty | superseded
+     * hidden = a stealth poll's vote: only that they voted is kept (selected is []), so a lock can hold.
+     */
     note: text('note'),
     at: integer('at', { mode: 'timestamp_ms' }).notNull(),
   },

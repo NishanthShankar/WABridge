@@ -12,10 +12,12 @@ import pino from 'pino';
 import { describe, expect, it } from 'vitest';
 import { type AppContext, setContext } from '../../context.js';
 import { createDatabase } from '../../db/client.js';
+import { pollVotes } from '../../db/schema.js';
 import { createReplyRouter } from '../../reply/reply.router.js';
 import { recordInbound } from '../../webhooks/chat-activity.js';
 import { getPoll, handlePollVote, judgeVote } from '../polls.js';
 import { createPollsRouter } from '../polls.router.js';
+import { holdVote, pendingVotes } from '../stealth-inbox.js';
 
 const logger = pino({ level: 'silent' });
 const CHAT = '919800000001@s.whatsapp.net';
@@ -336,5 +338,109 @@ describe('poll votes', () => {
     expect(
       judgeVote({ mode: 'lockFirstVote', deletedAt: null }, [], []),
     ).toMatchObject({ counted: false, note: 'empty' });
+  });
+
+  describe('stealth', () => {
+    const answersOnDisk = (db: ReturnType<typeof setup>['db']) =>
+      db
+        .select()
+        .from(pollVotes)
+        .all()
+        .filter((v) => v.selected !== '[]');
+
+    it('updateEveryTime: delivers the answer, stores nothing, holds it until acknowledged', async () => {
+      const t = setup();
+      const poll = await t.sendPoll({
+        name: 'Private',
+        options: ['A', 'B'],
+        stealth: true,
+      });
+      const v = await t.vote(poll, ['B']);
+      expect(v).toMatchObject({
+        selected: ['B'],
+        counted: true,
+        current: ['B'],
+        stealth: true,
+      });
+      expect(t.db.select().from(pollVotes).all()).toHaveLength(0);
+
+      const held = holdVote(t.db, v as Record<string, unknown>);
+      const pending = await (
+        await t.app.request(`/api/polls/pending?pollId=${poll.id}`)
+      ).json();
+      expect(pending.votes).toEqual([held]);
+
+      const ack = await t.app.request('/api/polls/pending/ack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voteIds: [held.voteId, 'nope'] }),
+      });
+      expect(await ack.json()).toEqual({ acked: 1, unknown: 1 });
+      expect(pendingVotes(t.db)).toHaveLength(0);
+
+      const summary = await (
+        await t.app.request(`/api/polls/${poll.id}`)
+      ).json();
+      expect(summary).toMatchObject({
+        stealth: true,
+        results: null,
+        votes: [],
+      });
+    });
+
+    it('lockFirstVote: keeps only that they voted, and the lock still holds', async () => {
+      const t = setup();
+      const poll = await t.sendPoll({
+        name: 'Private',
+        options: ['A', 'B'],
+        mode: 'lockFirstVote',
+        stealth: true,
+      });
+      expect(await t.vote(poll, ['A'])).toMatchObject({
+        counted: true,
+        current: ['A'],
+      });
+      expect(await t.vote(poll, ['B'])).toMatchObject({
+        counted: false,
+        note: 'locked',
+        current: null,
+      });
+      const rows = t.db.select().from(pollVotes).all();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ selected: '[]', note: 'hidden' });
+      expect(answersOnDisk(t.db)).toHaveLength(0);
+    });
+
+    it('multi-choice lockFirstVote: settles from memory, writes no answers', async () => {
+      const t = setup();
+      const poll = await t.sendPoll({
+        name: 'Private',
+        options: ['A', 'B', 'C'],
+        multiple: true,
+        mode: 'lockFirstVote',
+        stealth: true,
+      });
+      await t.vote(poll, ['A']);
+      await t.vote(poll, ['A', 'C']);
+      expect(t.db.select().from(pollVotes).all()).toHaveLength(0);
+      await new Promise((r) => setTimeout(r, 80));
+      expect(t.settled).toHaveLength(1);
+      expect(t.settled[0]).toMatchObject({
+        selected: ['A', 'C'],
+        counted: true,
+        note: null,
+        stealth: true,
+      });
+      expect(answersOnDisk(t.db)).toHaveLength(0);
+      expect(await t.vote(poll, ['B'])).toMatchObject({ note: 'locked' });
+    });
+
+    it('a held vote is dropped when it expires', async () => {
+      const owner = {};
+      holdVote(owner, { pollId: 'P' }, 20);
+      expect(pendingVotes(owner)).toHaveLength(1);
+      await new Promise((r) => setTimeout(r, 40));
+      expect(pendingVotes(owner)).toHaveLength(0);
+    });
   });
 });

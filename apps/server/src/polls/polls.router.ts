@@ -8,6 +8,7 @@ import {
   summarisePoll,
   votesFor,
 } from './polls.js';
+import { ackVote, pendingVotes } from './stealth-inbox.js';
 
 /**
  * /api/polls: polls this account sent (with POST /api/reply), their votes, and delete.
@@ -31,6 +32,33 @@ export function createPollsRouter() {
         return rest;
       }),
     });
+  });
+
+  /**
+   * GET /api/polls/pending?pollId= : stealth votes not yet acknowledged (memory only, at most
+   * an hour). A webhook that answered 2xx already acknowledged its vote.
+   */
+  router.get('/pending', (c) => {
+    const { db } = getContext(c);
+    return c.json({ votes: pendingVotes(db, c.req.query('pollId')) });
+  });
+
+  /** POST /api/polls/pending/ack {voteIds} : forget these stealth votes now. */
+  router.post('/pending/ack', async (c) => {
+    const { db } = getContext(c);
+    const body = (await c.req.json().catch(() => null)) as {
+      voteIds?: unknown;
+    } | null;
+    const ids = Array.isArray(body?.voteIds)
+      ? body.voteIds.filter((v): v is string => typeof v === 'string')
+      : [];
+    if (!ids.length || ids.length > 500)
+      return c.json(
+        { error: 'invalid_body', message: 'Give voteIds: 1 to 500 vote ids' },
+        400,
+      );
+    const acked = ids.filter((id) => ackVote(db, id));
+    return c.json({ acked: acked.length, unknown: ids.length - acked.length });
   });
 
   /** GET /api/polls/:id : the poll, its results and every vote received. */

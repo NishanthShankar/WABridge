@@ -85,7 +85,16 @@ describe('dontSkip and forcePoll outside the window', () => {
     expect(t.sent).toHaveLength(0);
   });
 
-  it('dontSkip sends a poll as numbered text', async () => {
+  it('dontSkip sends a real poll to a chat that wrote before', async () => {
+    const t = setup();
+    recordInbound(t.db, CHAT, null, new Date(Date.now() - 3 * DAY));
+    const r = await t.post({ poll: POLL, dontSkip: true });
+    expect(r.body).toMatchObject({ queued: true, sentAs: 'poll' });
+    expect(t.queued()[0].mediaType).toBe('poll');
+    expect(JSON.parse(t.queued()[0].content)).toEqual(POLL);
+  });
+
+  it('dontSkip sends a poll as numbered text to a chat that never wrote', async () => {
     const t = setup();
     const r = await t.post({ poll: POLL, dontSkip: true });
     expect(r.body).toMatchObject({ queued: true, sentAs: 'pollAsText' });
