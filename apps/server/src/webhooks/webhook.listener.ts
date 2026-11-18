@@ -16,6 +16,7 @@ import { setupChatStateListener } from '../chats/chat-state.js';
 import type { createDatabase } from '../db/client.js';
 import { handlePollVote } from '../polls/polls.js';
 import { setupListListener } from '../lists/lists.js';
+import { setupRecentMessages } from '../messages/recent-messages.js';
 import { attachPollJobs } from '../polls/poll-jobs.js';
 import { ackVote, holdVote } from '../polls/stealth-inbox.js';
 import { recordInbound } from './chat-activity.js';
@@ -65,6 +66,8 @@ export function setupWebhookListener(
   attachPollJobs(sock, db, logger);
   // Chat lists (labels) as they sync
   setupListListener(sock, db, logger);
+  // Recent messages in memory, for POST /api/messages/forward and the edit/delete time checks
+  setupRecentMessages(sock);
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     // Only handle real-time messages, not history sync

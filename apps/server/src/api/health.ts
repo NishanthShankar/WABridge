@@ -24,6 +24,10 @@ export const FEATURES = [
   'chat-lists', // GET/POST/PATCH/DELETE /api/lists, POST /api/lists/:id/chats, list.updated webhooks
   'api-docs', // GET /api/docs: this whole reference as markdown
   'group-info', // PATCH /api/groups/:id (name, description), PUT/DELETE /api/groups/:id/picture, pictureUrl on create
+  'message-actions', // POST /api/messages/edit, /delete, /forward, /star
+  'rich-messages', // location, contact cards, sticker and videoNote media types
+  'group-membership', // join/preview by link, leave, revoke invite, join requests, joinApproval setting
+  'chat-actions', // PATCH /api/chats/:id (pin, archive, mute, read, disappearing), PUT /api/chats/disappearing-default
   'group-participants', // GET /api/groups/:id/participants
   'group-create', // POST /api/groups, POST /api/groups/:id/participants, GET /api/groups/:id/invite
   'group-settings', // GET/PATCH /api/groups/:id/settings, settings on POST /api/groups

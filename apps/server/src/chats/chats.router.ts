@@ -1,5 +1,7 @@
+import { zValidator } from '@hono/zod-validator';
 import { Hono } from 'hono';
 import { getContext } from '../context.js';
+import { DISAPPEARING, applyChatActions, chatActionsSchema, defaultDisappearingSchema } from './chat-actions.js';
 import { toJid } from '../webhooks/jid.js';
 import {
   chatCandidates,
@@ -15,6 +17,8 @@ import {
  *
  * - GET /:id          — reply window, last known presence, last read receipt
  * - GET /:id/presence — ask WhatsApp for their presence now (?wait=ms, up to 5000) and return it
+ * - PATCH /:id        — pin, archive, mute, mark read/unread, disappearing-messages timer
+ * - PUT /disappearing-default — the timer for chats this account starts from now on
  */
 export function createChatsRouter() {
   const router = new Hono();
@@ -72,6 +76,63 @@ export function createChatsRouter() {
       fresh: !!presence && presence.at > before,
     });
   });
+
+  router.patch('/:id', zValidator('json', chatActionsSchema), async (c) => {
+    const { getSocket } = getContext(c);
+    const jid = toJid(c.req.param('id'));
+    if (!jid)
+      return c.json(
+        { error: 'invalid_chat', message: 'Not a phone number or JID' },
+        400,
+      );
+    const sock = getSocket();
+    if (!sock)
+      return c.json(
+        { error: 'not_connected', message: 'WhatsApp not connected' },
+        503,
+      );
+    const result = await applyChatActions(
+      sock,
+      jid,
+      await chatCandidates(sock, jid),
+      c.req.valid('json'),
+    );
+    if (result.applied.length === 0)
+      return c.json(
+        {
+          error: 'not_changed',
+          message: 'WhatsApp refused every change',
+          chatId: jid,
+          ...result,
+        },
+        502,
+      );
+    return c.json({ chatId: jid, ...result });
+  });
+
+  router.put(
+    '/disappearing-default',
+    zValidator('json', defaultDisappearingSchema),
+    async (c) => {
+      const { getSocket } = getContext(c);
+      const sock = getSocket();
+      if (!sock)
+        return c.json(
+          { error: 'not_connected', message: 'WhatsApp not connected' },
+          503,
+        );
+      const { disappearing } = c.req.valid('json');
+      try {
+        await sock.updateDefaultDisappearingMode(DISAPPEARING[disappearing]);
+      } catch (err) {
+        return c.json(
+          { error: 'not_changed', message: (err as Error).message },
+          502,
+        );
+      }
+      return c.json({ disappearingDefault: disappearing });
+    },
+  );
 
   return router;
 }

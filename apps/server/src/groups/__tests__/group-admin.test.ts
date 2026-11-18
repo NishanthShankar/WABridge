@@ -82,7 +82,7 @@ describe('group admin', () => {
       settings: { membersCanAdd: false, membersCanEditInfo: false },
     });
     expect(r.settings).toEqual({ applied: ['membersCanAdd', 'membersCanEditInfo'], failed: [] });
-    expect(await readGroupSettings(sock, r.id)).toEqual({ membersCanAdd: false, membersCanEditInfo: false, adminsOnlyMessages: false });
+    expect(await readGroupSettings(sock, r.id)).toEqual({ membersCanAdd: false, membersCanEditInfo: false, adminsOnlyMessages: false, joinApproval: false });
   });
 
   it('changes only the settings given and reports the ones WhatsApp refused', async () => {
@@ -90,7 +90,7 @@ describe('group admin', () => {
     const sock = fakeSock();
     const jid = '120363000000000001@g.us';
     expect(await applyGroupSettings(sock, jid, { adminsOnlyMessages: true })).toEqual({ applied: ['adminsOnlyMessages'], failed: [] });
-    expect(await readGroupSettings(sock, jid)).toEqual({ membersCanAdd: true, membersCanEditInfo: true, adminsOnlyMessages: true });
+    expect(await readGroupSettings(sock, jid)).toEqual({ membersCanAdd: true, membersCanEditInfo: true, adminsOnlyMessages: true, joinApproval: false });
 
     failSettingUpdate = true;
     const r = await applyGroupSettings(sock, jid, { membersCanAdd: false, membersCanEditInfo: false });

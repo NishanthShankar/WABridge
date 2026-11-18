@@ -1,6 +1,11 @@
 import type { AnyMessageContent } from '@whiskeysockets/baileys';
+import { contactPayload, locationPayload } from './rich-content.js';
 
-export const MEDIA_TYPES = ['image', 'video', 'audio', 'document'] as const;
+/**
+ * Media sent from a URL. sticker: a WebP image. videoNote: a short square video shown as a
+ * round video message. Neither has a caption, so content is ignored for them, as for audio.
+ */
+export const MEDIA_TYPES = ['image', 'video', 'audio', 'document', 'sticker', 'videoNote'] as const;
 export type MediaType = (typeof MEDIA_TYPES)[number];
 
 /**
@@ -12,6 +17,10 @@ export function buildMessagePayload(
   mediaUrl?: string | null,
   mediaType?: string | null,
 ): AnyMessageContent {
+  // Stored like polls: the fields are JSON in content, there is no URL.
+  if (mediaType === 'location') return locationPayload(JSON.parse(content));
+  if (mediaType === 'contact') return contactPayload(JSON.parse(content));
+
   if (!mediaUrl || !mediaType) {
     return { text: content };
   }
@@ -23,6 +32,10 @@ export function buildMessagePayload(
       return { video: { url: mediaUrl }, caption: content };
     case 'audio':
       return { audio: { url: mediaUrl }, mimetype: 'audio/mp4' };
+    case 'sticker':
+      return { sticker: { url: mediaUrl } };
+    case 'videoNote':
+      return { video: { url: mediaUrl }, ptv: true };
     case 'document': {
       const fileName = decodeURIComponent(
         mediaUrl.split('/').pop()?.split('?')[0] ?? 'file',

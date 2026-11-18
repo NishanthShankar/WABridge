@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { POLL_MODES } from '../polls/polls.js';
 import { MEDIA_TYPES } from '../scheduler/message-payload.js';
+import { contactSchema, locationSchema } from '../scheduler/rich-content.js';
 
 const messageRef = z.object({
   messageId: z.string().min(1).max(128),
@@ -20,6 +21,10 @@ export const replySchema = z
     /** Public http(s) URL of an image, video, audio or document to send. */
     mediaUrl: z.string().url().max(2048).optional(),
     mediaType: z.enum(MEDIA_TYPES).optional(),
+    /** Send a map pin. Sent on its own, after any text. */
+    location: locationSchema.optional(),
+    /** Send a contact card, or up to 10 in one message. Sent on its own, after any text. */
+    contact: contactSchema.optional(),
     /** Show the answer as a reply to this message. text is what WhatsApp shows in the quote. */
     quote: messageRef
       .extend({ text: z.string().max(1024).optional() })
@@ -105,8 +110,12 @@ export const replySchema = z
     message: 'mediaUrl must be http or https',
     path: ['mediaUrl'],
   })
-  .refine((v) => !!v.text || !!v.reaction || !!v.mediaUrl || !!v.poll, {
-    message: 'Give text, mediaUrl, poll, reaction or a mix',
+  .refine(
+    (v) => !!v.text || !!v.reaction || !!v.mediaUrl || !!v.poll || !!v.location || !!v.contact,
+    { message: 'Give text, mediaUrl, poll, location, contact, reaction or a mix' },
+  )
+  .refine((v) => [v.mediaUrl, v.poll, v.location, v.contact].filter(Boolean).length <= 1, {
+    message: 'Send one of mediaUrl, poll, location or contact per request',
   })
   .refine((v) => !(v.poll && (v.text || v.mediaUrl)), {
     message: 'A poll is sent on its own: put the question in poll.name',

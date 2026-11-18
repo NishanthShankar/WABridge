@@ -1,7 +1,15 @@
 import { z } from 'zod';
+import { MEDIA_TYPES } from '../scheduler/message-payload.js';
+import { contactSchema, locationSchema } from '../scheduler/rich-content.js';
 
 /** Shared media type enum */
-export const mediaTypeEnum = z.enum(['image', 'video', 'audio', 'document']);
+export const mediaTypeEnum = z.enum(MEDIA_TYPES);
+
+const hasBody = (d: { content: string; mediaUrl?: string; location?: unknown; contact?: unknown }) =>
+  d.content.length > 0 || !!d.mediaUrl || !!d.location || !!d.contact;
+const oneKind = (d: { mediaUrl?: string; location?: unknown; contact?: unknown }) =>
+  [d.mediaUrl, d.location, d.contact].filter(Boolean).length <= 1;
+const oneKindMessage = { message: 'Send one of mediaUrl, location or contact per message' };
 
 /** Schema for scheduling a new message (or sending immediately) */
 export const scheduleMessageSchema = z.object({
@@ -13,15 +21,19 @@ export const scheduleMessageSchema = z.object({
   scheduledAt: z.string().datetime().optional(),
   mediaUrl: z.string().url().optional(),
   mediaType: mediaTypeEnum.optional(),
+  /** Send a map pin instead of text. content is ignored. */
+  location: locationSchema.optional(),
+  /** Send a contact card (or up to 10) instead of text. content is ignored. */
+  contact: contactSchema.optional(),
 }).refine(
   (d) => d.contactId || d.phone || d.groupId,
   { message: 'contactId, phone, or groupId is required' },
 ).refine(
   (d) => !d.mediaUrl || d.mediaType,
   { message: 'mediaType is required when mediaUrl is provided' },
-).refine(
-  (d) => d.content.length > 0 || !!d.mediaUrl,
-  { message: 'content or mediaUrl is required', path: ['content'] },
+).refine(oneKind, oneKindMessage).refine(
+  hasBody,
+  { message: 'content, mediaUrl, location or contact is required', path: ['content'] },
 );
 
 /** Schema for editing a pending message */
@@ -138,8 +150,11 @@ export const bulkScheduleSchema = z.object({
     scheduledAt: z.string().datetime().optional(),
     mediaUrl: z.string().url().optional(),
     mediaType: mediaTypeEnum.optional(),
+    location: locationSchema.optional(),
+    contact: contactSchema.optional(),
   }).refine(d => d.contactId || d.phone || d.groupId, { message: 'contactId, phone, or groupId required' })
     .refine(d => !d.mediaUrl || d.mediaType, { message: 'mediaType is required when mediaUrl is provided' })
-    .refine(d => d.content.length > 0 || !!d.mediaUrl, { message: 'content or mediaUrl is required', path: ['content'] }))
+    .refine(oneKind, oneKindMessage)
+    .refine(hasBody, { message: 'content, mediaUrl, location or contact is required', path: ['content'] }))
     .min(1).max(500),
 });

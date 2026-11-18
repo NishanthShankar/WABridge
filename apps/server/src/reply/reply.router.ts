@@ -6,6 +6,7 @@ import { chatCandidates, replyWindow } from '../chats/chat-state.js';
 import { getContext } from '../context.js';
 import { sendPoll } from '../polls/polls.js';
 import { buildMessagePayload } from '../scheduler/message-payload.js';
+import { foldRichContent } from '../scheduler/rich-content.js';
 import { REPLY_WINDOW_MS } from '../webhooks/chat-activity.js';
 import { toJid } from '../webhooks/jid.js';
 import { queueOutsideWindow } from './reply-queue.js';
@@ -87,6 +88,7 @@ export function createReplyRouter(queue?: Queue) {
 
     const weight =
       (input.text || input.mediaUrl || input.poll ? MESSAGE_WEIGHT : 0) +
+      (input.location || input.contact ? MESSAGE_WEIGHT : 0) +
       (input.reaction ? REACTION_WEIGHT : 0);
     const bucketKey = `${tenantId}|${jid}`;
     const now = Date.now();
@@ -194,6 +196,15 @@ export function createReplyRouter(queue?: Queue) {
             ? ({ ...content, mentions } as typeof content)
             : content,
           quoted ? { quoted } : undefined,
+        );
+        result.messageId = sent?.key?.id ?? null;
+      }
+
+      const rich = foldRichContent(input);
+      if (rich) {
+        const sent = await sock.sendMessage(
+          jid,
+          buildMessagePayload(rich.content, null, rich.mediaType),
         );
         result.messageId = sent?.key?.id ?? null;
       }

@@ -12,6 +12,7 @@ import {
 } from './scheduling.schema.js';
 import { createSchedulingService } from './scheduling.service.js';
 import { getContext } from '../context.js';
+import { foldRichContent } from '../scheduler/rich-content.js';
 
 /**
  * Create the scheduling API router.
@@ -44,10 +45,20 @@ export function createSchedulingRouter(queue: Queue) {
     '/',
     zValidator('json', scheduleMessageSchema),
     async (c) => {
-      const { contactId, phone, name, groupId, content, scheduledAt, mediaUrl, mediaType } = c.req.valid('json');
+      const { contactId, phone, name, groupId, content, scheduledAt, mediaUrl, mediaType, location, contact } = c.req.valid('json');
+      const rich = foldRichContent({ location, contact });
       try {
         const service = getService(c);
-        const msg = await service.scheduleMessage(contactId, content, scheduledAt, phone, name, mediaUrl, mediaType, groupId);
+        const msg = await service.scheduleMessage(
+          contactId,
+          rich?.content ?? content,
+          scheduledAt,
+          phone,
+          name,
+          rich ? undefined : mediaUrl,
+          rich?.mediaType ?? mediaType,
+          groupId,
+        );
         return c.json(msg, 201);
       } catch (err) {
         const error = err as Error & { statusCode?: number };
@@ -67,7 +78,11 @@ export function createSchedulingRouter(queue: Queue) {
     '/bulk',
     zValidator('json', bulkScheduleSchema),
     async (c) => {
-      const { messages } = c.req.valid('json');
+      const { messages: input } = c.req.valid('json');
+      const messages = input.map(({ location, contact, ...m }) => {
+        const rich = foldRichContent({ location, contact });
+        return rich ? { ...m, content: rich.content, mediaType: rich.mediaType as never, mediaUrl: undefined } : m;
+      });
       try {
         const service = getService(c);
         const result = await service.bulkScheduleMessages(messages);

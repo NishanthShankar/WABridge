@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
-import { createGroupSchema, groupPictureSchema, groupSettingsSchema, listGroupsSchema, updateGroupInfoSchema, updateParticipantsSchema } from './groups.schema.js';
+import { createGroupSchema, groupPictureSchema, groupSettingsSchema, joinGroupSchema, joinRequestsSchema, listGroupsSchema, updateGroupInfoSchema, updateParticipantsSchema } from './groups.schema.js';
+import { answerJoinRequests, inviteCode, JoinCapError, joinByInvite, listJoinRequests, previewInvite, revokeInvite } from './group-membership.js';
 import { applyGroupSettings, createGroup, GroupCapError, inviteLink, readGroupSettings, setGroupPicture, updateGroupInfo, updateParticipants } from './group-admin.js';
 import { createGroupsService } from './groups.service.js';
 import { getContext } from '../context.js';
@@ -22,6 +23,12 @@ import { jidToPhone, ownJids } from '../webhooks/jid.js';
  * - PATCH /:id — Rename and/or change the description
  * - PUT /:id/picture — Set the group picture from an image URL
  * - DELETE /:id/picture — Remove the group picture
+ * - GET /join?link=   — What an invite link leads to, without joining
+ * - POST /join        — Join by invite link (capped per day)
+ * - POST /:id/leave   — Leave the group
+ * - DELETE /:id/invite — Revoke the invite link and get a new one (admin)
+ * - GET /:id/requests — People waiting to be let in (admin)
+ * - POST /:id/requests — Approve or reject them (admin)
  */
 export function createGroupsRouter() {
   const router = new Hono();
@@ -30,6 +37,98 @@ export function createGroupsRouter() {
     const ctx = getContext(c);
     return createGroupsService(ctx.db, ctx.getSocket);
   }
+
+  // INVITE LINK: preview without joining. Registered before /:id so "join" is not read as an id.
+  router.get('/join', async (c) => {
+    const { getSocket } = getContext(c);
+    const code = inviteCode(c.req.query('link') ?? '');
+    if (!code) return c.json({ error: 'invalid_link', message: 'link is not a WhatsApp group invite link or code' }, 400);
+    const sock = getSocket();
+    if (!sock) return c.json({ error: 'WhatsApp not connected' }, 503);
+    try {
+      return c.json(await previewInvite(sock, code));
+    } catch (err) {
+      return c.json({ error: 'invite_not_found', message: `The link is invalid, revoked or expired (${(err as Error).message})` }, 404);
+    }
+  });
+
+  // JOIN by invite link
+  router.post('/join', zValidator('json', joinGroupSchema), async (c) => {
+    const { db, getSocket } = getContext(c);
+    const code = inviteCode(c.req.valid('json').link);
+    if (!code) return c.json({ error: 'invalid_link', message: 'link is not a WhatsApp group invite link or code' }, 400);
+    const sock = getSocket();
+    if (!sock) return c.json({ error: 'WhatsApp not connected' }, 503);
+    try {
+      const result = await joinByInvite(db, sock, code);
+      return c.json(result, result.joined ? 200 : 202);
+    } catch (err) {
+      if (err instanceof JoinCapError) return c.json({ error: 'join_cap_reached', message: err.message }, 429);
+      return c.json({ error: 'join_failed', message: (err as Error).message }, 502);
+    }
+  });
+
+  // LEAVE
+  router.post('/:id/leave', async (c) => {
+    const { getSocket } = getContext(c);
+    const sock = getSocket();
+    if (!sock) return c.json({ error: 'WhatsApp not connected' }, 503);
+    const id = c.req.param('id');
+    if (!id.endsWith('@g.us')) return c.json({ error: 'Not a group JID' }, 400);
+    try {
+      await sock.groupLeave(id);
+    } catch (err) {
+      return c.json({ error: 'leave_failed', message: (err as Error).message }, 502);
+    }
+    return c.json({ id, left: true });
+  });
+
+  // INVITE link: revoke (the old link stops working) and return the new one
+  router.delete('/:id/invite', async (c) => {
+    const { getSocket } = getContext(c);
+    const sock = getSocket();
+    if (!sock) return c.json({ error: 'WhatsApp not connected' }, 503);
+    const id = c.req.param('id');
+    if (!id.endsWith('@g.us')) return c.json({ error: 'Not a group JID' }, 400);
+    try {
+      return c.json({ id, revoked: true, inviteLink: await revokeInvite(sock, id) });
+    } catch (err) {
+      return c.json({ error: 'revoke_failed', message: `${(err as Error).message} (is this account an admin?)` }, 502);
+    }
+  });
+
+  // JOIN REQUESTS: list
+  router.get('/:id/requests', async (c) => {
+    const { getSocket } = getContext(c);
+    const sock = getSocket();
+    if (!sock) return c.json({ error: 'WhatsApp not connected' }, 503);
+    const id = c.req.param('id');
+    if (!id.endsWith('@g.us')) return c.json({ error: 'Not a group JID' }, 400);
+    try {
+      return c.json({ id, requests: await listJoinRequests(sock, id) });
+    } catch (err) {
+      return c.json({ error: 'requests_failed', message: `${(err as Error).message} (is this account an admin?)` }, 502);
+    }
+  });
+
+  // JOIN REQUESTS: approve / reject
+  router.post('/:id/requests', zValidator('json', joinRequestsSchema), async (c) => {
+    const { getSocket } = getContext(c);
+    const sock = getSocket();
+    if (!sock) return c.json({ error: 'WhatsApp not connected' }, 503);
+    const id = c.req.param('id');
+    if (!id.endsWith('@g.us')) return c.json({ error: 'Not a group JID' }, 400);
+    const { approve = [], reject = [] } = c.req.valid('json');
+    try {
+      const results = [
+        ...(approve.length ? await answerJoinRequests(sock, id, approve, 'approve') : []),
+        ...(reject.length ? await answerJoinRequests(sock, id, reject, 'reject') : []),
+      ];
+      return c.json({ id, results });
+    } catch (err) {
+      return c.json({ error: 'requests_failed', message: `${(err as Error).message} (is this account an admin?)` }, 502);
+    }
+  });
 
   // CREATE a group (this account becomes admin)
   router.post('/', zValidator('json', createGroupSchema), async (c) => {

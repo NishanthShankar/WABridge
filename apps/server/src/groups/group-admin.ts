@@ -143,6 +143,8 @@ export interface GroupSettings {
   membersCanEditInfo: boolean;
   /** true: only admins can send messages */
   adminsOnlyMessages: boolean;
+  /** true: people joining by link wait for an admin to approve them */
+  joinApproval: boolean;
 }
 
 /** The group's current permissions, as WhatsApp reports them. */
@@ -152,6 +154,7 @@ export async function readGroupSettings(sock: WASocket, jid: string): Promise<Gr
     membersCanAdd: !!meta.memberAddMode,
     membersCanEditInfo: !meta.restrict,
     adminsOnlyMessages: !!meta.announce,
+    joinApproval: !!meta.joinApprovalMode,
   };
 }
 
@@ -167,6 +170,9 @@ export async function applyGroupSettings(sock: WASocket, jid: string, wanted: Gr
     steps.push(['membersCanEditInfo', () => sock.groupSettingUpdate(jid, wanted.membersCanEditInfo ? 'unlocked' : 'locked')]);
   if (wanted.adminsOnlyMessages !== undefined)
     steps.push(['adminsOnlyMessages', () => sock.groupSettingUpdate(jid, wanted.adminsOnlyMessages ? 'announcement' : 'not_announcement')]);
+
+  if (wanted.joinApproval !== undefined)
+    steps.push(['joinApproval', () => sock.groupJoinApprovalMode(jid, wanted.joinApproval ? 'on' : 'off')]);
 
   const applied: Array<keyof GroupSettings> = [];
   const failed: Array<{ setting: keyof GroupSettings; error: string }> = [];

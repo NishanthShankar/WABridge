@@ -6,6 +6,7 @@ import { groups } from '../db/schema.js';
 import { createSchedulingService } from '../scheduling/scheduling.service.js';
 import { isGroupJid, jidToPhone } from '../webhooks/jid.js';
 import type { ReplyInput } from './reply.schema.js';
+import { foldRichContent } from '../scheduler/rich-content.js';
 
 /** A poll written out as text, for dontSkip to a chat that has never written to this account. */
 export function pollAsText(poll: {
@@ -46,10 +47,12 @@ export async function queueOutsideWindow(params: {
       },
     };
 
-  const dropped = (['reaction', 'quote', 'mentions'] as const).filter(
+  // A queued message carries one thing: a location or contact card wins over text.
+  const dropped: string[] = (['reaction', 'quote', 'mentions'] as const).filter(
     (k) => input[k] !== undefined,
   );
-  if (!input.text && !input.mediaUrl && !input.poll)
+  if ((input.location || input.contact) && input.text) dropped.push('text');
+  if (!input.text && !input.mediaUrl && !input.poll && !input.location && !input.contact)
     return {
       status: 409,
       body: {
@@ -114,6 +117,13 @@ export async function queueOutsideWindow(params: {
   let sentAs: 'text' | 'media' | 'poll' | 'pollAsText' = mediaUrl
     ? 'media'
     : 'text';
+  const rich = foldRichContent(input);
+  if (rich) {
+    content = rich.content;
+    mediaType = rich.mediaType;
+    mediaUrl = undefined;
+    sentAs = 'media';
+  }
   if (input.poll) {
     // A chat that has written to this account before gets the real poll, with dontSkip too.
     if (input.forcePoll || window.lastInboundAt) {

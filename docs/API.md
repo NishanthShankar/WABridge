@@ -438,9 +438,11 @@ Schedule a message or send immediately. Supports both individual contacts and gr
 | `content` | string | Yes | Message text (min 1 char) |
 | `scheduledAt` | string | No | ISO datetime. Omit to send immediately. |
 | `mediaUrl` | string (URL) | No | URL to media file |
-| `mediaType` | string | If mediaUrl set | `image`, `video`, `audio`, or `document` |
+| `mediaType` | string | If mediaUrl set | `image`, `video`, `audio`, `document`, `sticker` (a WebP image) or `videoNote` (a short square MP4, shown as a round video) |
+| `location` | object | No | A map pin instead of text: `{latitude, longitude, name?, address?}` |
+| `contact` | object or array | No | A contact card instead of text: `{name, phone, org?, email?}`, or up to 10 of them in one message |
 
-> Provide exactly one of `contactId`, `phone`, or `groupId`. For group messages, the group must be synced first via `POST /api/groups/sync`.
+> Provide exactly one of `contactId`, `phone`, or `groupId`. Send one of `mediaUrl`, `location` or `contact` per message. Like polls, a stored location or contact has `mediaType` `location` / `contact` and its fields as JSON in `content`. For group messages, the group must be synced first via `POST /api/groups/sync`.
 
 **Response:** `201`
 
@@ -568,6 +570,91 @@ Returns `404` if message not found or not in `pending` status.
 Retry a **failed** message. Resets status to `pending` and schedules immediate send.
 
 Returns `404` if message not found or not in `failed` status.
+
+---
+
+## Sent messages: edit, delete, forward
+
+These act on messages that are already in WhatsApp. Name the message in one of two ways:
+
+| Field | Description |
+|-------|-------------|
+| `chatId` or `phone` + `messageId` | The chat (a JID from a webhook's `chatId`, or a phone number) and the WhatsApp message id: `messageId` from `POST /api/reply`, from a webhook, or `whatsappMessageId` from `GET /api/messages/:id` |
+| `scheduledMessageId` | The `id` that `POST /api/messages` returned, once the message has been sent |
+
+None of these count toward the daily cap. Message text is never logged.
+
+### POST /api/messages/edit
+
+Change the text of a message this account sent. WhatsApp allows edits for **15 minutes** after sending. The chat shows it as "Edited".
+
+```bash
+curl -X POST http://localhost:4000/api/messages/edit \
+  -H "X-API-Key: ..." -H "Content-Type: application/json" \
+  -d '{"scheduledMessageId": "58282874-...", "text": "3 studies from QUANTUM assigned to you"}'
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `text` | string | The new text (1-4096 characters) |
+
+Returns `{ "edited": true, "chatId": "...", "messageId": "..." }`. With `scheduledMessageId`, the stored `content` is updated too.
+
+| Error | Status | When |
+|-------|--------|------|
+| `edit_window_closed` | 409 | Sent more than 15 minutes ago |
+| `not_own_message` | 409 | Someone else wrote it |
+| `not_text` | 409 | Media or a poll: only text messages can be edited |
+| `not_sent` | 409 | `scheduledMessageId` of a message that has not been sent yet (use `PATCH /api/messages/:id`) |
+
+The bridge checks the age and type only when it knows the message (sent or seen in the last 72 hours, or by `scheduledMessageId`). Otherwise the edit is sent and WhatsApp ignores it if it is too late.
+
+### POST /api/messages/delete
+
+Delete a message for everyone ("This message was deleted"). Works for about **two and a half days** after sending.
+
+```bash
+curl -X POST http://localhost:4000/api/messages/delete \
+  -H "X-API-Key: ..." -H "Content-Type: application/json" \
+  -d '{"chatId": "120363000000000001@g.us", "messageId": "3EB0..."}'
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `fromMe` | boolean | Default `true`. `false`: someone else's message in a group where this account is **admin** |
+| `participant` | string | With `fromMe: false`: who wrote it (the webhook's `from` phone, or `fromLid`) |
+
+Returns `{ "deleted": true, "chatId": "...", "messageId": "..." }`. Errors: `delete_window_closed` (409), `not_group` (400, `fromMe: false` outside a group). Polls have their own `DELETE /api/polls/:id`.
+
+### POST /api/messages/forward
+
+Forward a recent message to another chat or group. It arrives marked "Forwarded". Media is forwarded without downloading or uploading it again.
+
+```bash
+curl -X POST http://localhost:4000/api/messages/forward \
+  -H "X-API-Key: ..." -H "Content-Type: application/json" \
+  -d '{"chatId": "919876543210@s.whatsapp.net", "messageId": "3EB0...", "toChatId": "120363000000000001@g.us"}'
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `toChatId` or `toPhone` | string | Where to forward it. Exactly one |
+
+Returns `{ "forwarded": true, "chatId": "<destination>", "messageId": "<new message id>" }`.
+
+- Only **recent** messages can be forwarded: those this connection sent or received in the last 72 hours since the server last restarted (at most 2000, held in memory only, never on disk). Others get `404 not_found`.
+- A **group** this account is in can always receive a forward. A **1:1 chat** only inside its 24 hour reply window, like `POST /api/reply`; otherwise `409 outside_reply_window`.
+- At most 12 forwards per destination chat per minute (`429 too_many_forwards`).
+
+### POST /api/messages/star
+
+Star or unstar a message on this account's phone (only this account sees stars).
+
+```json
+{ "chatId": "919876543210@s.whatsapp.net", "messageId": "3EB0...", "star": true }
+```
+
+`fromMe` is taken from what the bridge saw; give it (`true` for a message this account sent) when the message is older than 72 hours. Returns `{ "starred": true, "chatId", "messageId" }`.
 
 ---
 
@@ -1002,7 +1089,9 @@ Answer a chat that wrote to this account in the last 24 hours, with text, media 
 | `chatId` or `phone` | string | Exactly one. `chatId` is the webhook's `chatId` (works for groups and LID senders). |
 | `text` | string | Up to 4096 characters. With `mediaUrl` it is the caption (ignored for audio). |
 | `mediaUrl` | string | Public http(s) URL of the file. The bridge downloads it and sends it. |
-| `mediaType` | `image` \| `video` \| `audio` \| `document` | Required with `mediaUrl`. A document's file name is taken from the URL. |
+| `mediaType` | `image` \| `video` \| `audio` \| `document` \| `sticker` \| `videoNote` | Required with `mediaUrl`. A document's file name is taken from the URL. `sticker`: a WebP image. `videoNote`: a short square MP4, shown as a round video. Neither has a caption. |
+| `location` | `{latitude, longitude, name?, address?}` | Send a map pin, e.g. a clinic's location. Sent after any `text`. |
+| `contact` | `{name, phone, org?, email?}` or an array (up to 10) | Send a contact card, e.g. a doctor's number. Sent after any `text`. |
 | `quote` | `{messageId, fromMe?, participant?, text?}` | Show the answer as a reply to that message. In groups `participant` is who wrote it. |
 | `mentions` | string[] | Phones or JIDs to @mention. Put `@<number>` in `text` where each should show. |
 | `reaction` | `{messageId, emoji, fromMe?, participant?}` | React to a message. `emoji: ""` removes the reaction. |
@@ -1103,6 +1192,30 @@ Ask WhatsApp to send this person's presence, then return the latest one. `?wait=
 ```
 
 `fresh: false` means nothing new came in while waiting. That is common: many people hide their online status, and silence does **not** mean they are away. To decide whether someone is likely watching, prefer `replyWindow.secondsSinceInbound`.
+
+### PATCH /api/chats/:id
+
+Tidy this account's chat list, or set a disappearing-messages timer. Give any of these; the rest stay as they are. `:id` is a phone number, a chat JID or a group JID.
+
+```json
+{ "archived": true, "muted": "8h" }
+```
+
+| Field | Values | What it does |
+|---|---|---|
+| `pinned` | `true` / `false` | Pin the chat to the top of the list |
+| `archived` | `true` / `false` | Move it to (or out of) Archived |
+| `muted` | `"8h"`, `"1w"`, `"always"`, `false` | Mute notifications; `false` unmutes |
+| `read` | `true` / `false` | `true` clears the unread badge, `false` marks the chat unread. No read receipt (blue ticks) is sent either way |
+| `disappearing` | `"off"`, `"24h"`, `"7d"`, `"90d"` | Disappearing-messages timer. **The other side sees this**: WhatsApp posts "turned on disappearing messages" in the chat. In a group, only admins can change it unless the group allows everyone |
+
+Response: `{ "chatId", "applied": ["archived", "muted"], "failed": [] }`. A change WhatsApp refused is in `failed` with its `error`; if all were refused the answer is `502 not_changed`. Everything except `disappearing` only changes how the chat looks on this account's phone and linked devices.
+
+Archive and mark-read work best when the chat had a message since the server last started (the bridge passes WhatsApp the chat's last message, as the phone does).
+
+### PUT /api/chats/disappearing-default
+
+The timer for **new** chats this account starts: `{ "disappearing": "24h" }` (`off`, `24h`, `7d`, `90d`). Existing chats keep theirs.
 
 ### Webhooks: `presence.update`, `message.read`
 
@@ -1380,12 +1493,56 @@ The group is created with this account as its only member, as `superadmin` (owne
 
 `{ "id", "inviteLink" }`. This account must be an admin of the group.
 
+### DELETE /api/groups/:id/invite
+
+Revoke the invite link: the old one stops working at once. Returns the new one: `{ "id", "revoked": true, "inviteLink": "https://chat.whatsapp.com/..." }`. Admin only.
+
+### GET /api/groups/join?link=...
+
+What an invite link leads to, without joining. `link` is the full link or just its code.
+
+```json
+{ "id": "120363...@g.us", "name": "Clinic staff", "description": "Shifts", "size": 12, "createdAt": "...", "joinApprovalRequired": false }
+```
+
+`404 invite_not_found` when the link is invalid, revoked or expired.
+
+### POST /api/groups/join
+
+Join a group by invite link: `{ "link": "https://chat.whatsapp.com/AbC..." }`.
+
+- `200 { "id", "joined": true }` once in.
+- `202 { "id": null, "joined": false, "pendingApproval": true }` when the group needs an admin to approve: WhatsApp has filed a join request.
+- At most 10 joins a day (resets at midnight IST), because joining many groups fast is what spam accounts do: `429 join_cap_reached`.
+
+### POST /api/groups/:id/leave
+
+Leave the group: `{ "id", "left": true }`. The group stays in `GET /api/groups` until the next sync, and sent messages to it stay in the history. If this account is the only admin, WhatsApp makes another member admin.
+
+### GET /api/groups/:id/requests
+
+People waiting to be let in (when `joinApproval` is on). Admin only.
+
+```json
+{ "id": "120363...@g.us", "requests": [ { "jid": "1234...@lid", "phone": "919812345678", "method": "invite_link", "requestedAt": "..." } ] }
+```
+
+`phone` is `null` when WhatsApp only gives a LID.
+
+### POST /api/groups/:id/requests
+
+```json
+{ "approve": ["919812345678"], "reject": ["1234...@lid"] }
+```
+
+Phones or JIDs (the `jid` from the list works for LIDs). Each comes back with a `status`: `approved`, `rejected`, `failed` (no such request), `not_found` or `invalid`.
+
 ### GET /api/groups/:id/settings
 
 The group's permissions as WhatsApp reports them:
 
 ```json
-{ "id": "120363...@g.us", "settings": { "membersCanAdd": false, "membersCanEditInfo": false, "adminsOnlyMessages": false } }
+{ "id": "120363...@g.us", "settings": { "membersCanAdd": false, "membersCanEditInfo": false, "adminsOnlyMessages": false, "joinApproval": false } }
 ```
 
 | Setting | `false` means | `true` means | New WhatsApp groups |
@@ -1393,10 +1550,11 @@ The group's permissions as WhatsApp reports them:
 | `membersCanAdd` | only admins can add members | every member can add | `true` |
 | `membersCanEditInfo` | only admins can change the name, photo and description | every member can | `true` |
 | `adminsOnlyMessages` | everyone can send messages | only admins can send messages | `false` |
+| `joinApproval` | anyone with the link joins at once | an admin approves each join (see `/:id/requests`) | `false` |
 
 ### PATCH /api/groups/:id/settings
 
-Change any of the three; the ones left out stay as they are. This account must be an admin of the group.
+Change any of the four; the ones left out stay as they are. This account must be an admin of the group.
 
 ```json
 { "membersCanAdd": false, "membersCanEditInfo": false }
@@ -1430,7 +1588,7 @@ The bridge downloads the image (http or https, a JPEG, PNG or WebP, at most 5 MB
 
 Remove the group picture. Response: `{ "id", "removed": true }`.
 
-`/api/health` lists `group-create`, `group-settings` and `group-info` when these exist.
+`/api/health` lists `group-create`, `group-settings`, `group-info` and `group-membership` when these exist.
 
 ## Multiuser tenants
 

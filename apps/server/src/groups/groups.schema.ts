@@ -19,11 +19,17 @@ const groupSettingsFields = z.object({
   membersCanAdd: z.boolean().optional(),
   membersCanEditInfo: z.boolean().optional(),
   adminsOnlyMessages: z.boolean().optional(),
+  /** true: people joining by link need an admin to approve them (see /:id/requests) */
+  joinApproval: z.boolean().optional(),
 });
 
 export const groupSettingsSchema = groupSettingsFields.refine(
-  (v) => v.membersCanAdd !== undefined || v.membersCanEditInfo !== undefined || v.adminsOnlyMessages !== undefined,
-  { message: 'Give membersCanAdd, membersCanEditInfo or adminsOnlyMessages' },
+  (v) =>
+    v.membersCanAdd !== undefined ||
+    v.membersCanEditInfo !== undefined ||
+    v.adminsOnlyMessages !== undefined ||
+    v.joinApproval !== undefined,
+  { message: 'Give membersCanAdd, membersCanEditInfo, adminsOnlyMessages or joinApproval' },
 );
 
 export type GroupSettingsInput = z.infer<typeof groupSettingsFields>;
@@ -74,3 +80,18 @@ export const groupPictureSchema = z.object({
     .max(2048)
     .refine((u) => /^https?:\/\//i.test(u), { message: 'imageUrl must be http or https' }),
 });
+
+/** POST /api/groups/join and GET /api/groups/join?link=: an invite link or its code */
+export const joinGroupSchema = z.object({
+  link: z.string().trim().min(10).max(200),
+});
+
+/** POST /api/groups/:id/requests: let people in, or turn them away */
+export const joinRequestsSchema = z
+  .object({
+    approve: z.array(person).max(50).optional(),
+    reject: z.array(person).max(50).optional(),
+  })
+  .refine((v) => (v.approve?.length ?? 0) + (v.reject?.length ?? 0) > 0, {
+    message: 'Give approve, reject or both',
+  });

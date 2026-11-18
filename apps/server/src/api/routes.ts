@@ -22,6 +22,7 @@ import { createPollsRouter } from '../polls/polls.router.js';
 import { createListsRouter } from '../lists/lists.router.js';
 import { createDocsRouter } from './docs.js';
 import { createReplyRouter } from '../reply/reply.router.js';
+import { createMessageActionsRouter } from '../messages/message-actions.router.js';
 
 /** Relative path from CWD (apps/server/) to the web build output */
 const WEB_DIST = '../web/dist';
@@ -110,7 +111,8 @@ export function createApp(plugin: ServerPlugin, messageQueue: Queue, extensions:
   // Labels API
   app.route('/api/labels', createLabelsRouter());
 
-  // Messages API
+  // Messages API: edit, delete and forward sent messages, then scheduling
+  app.route('/api/messages', createMessageActionsRouter());
   app.route('/api/messages', createSchedulingRouter(messageQueue));
 
   // Groups API
