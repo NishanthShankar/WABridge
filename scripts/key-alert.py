@@ -105,7 +105,10 @@ def describe(d, kind):
     who = "no key" if d.get("keyPrefix") == "none" else \
         f"key {d.get('keyPrefix')}… (length {d.get('keyLength', '?')})"
     owner = d.get("keyTenant")
-    if owner:
+    if owner and owner == d.get("tenant"):
+        # Names are not unique: the key belongs to a different tenant with the same name.
+        who += f", the key of a different tenant also named {owner} (not this one)"
+    elif owner:
         who += f", which is {owner}'s key"
     verdict = "ALLOWED (warn mode)" if kind == "allowed" else "refused"
     return f"• {d.get('tenant') or '?'}: {d.get('method')} {route(d.get('path'))} with {who} → {verdict}"
