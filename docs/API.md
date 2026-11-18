@@ -1550,7 +1550,7 @@ Every `message.received` now also carries:
 
 In a group, `from` is the member who wrote. `quoted` is null unless the message replies to another.
 
-Other events (allEvents only): `message.reaction` (`messageId`, `targetMessageId`, `targetFromMe`, `emoji`, null when removed), `message.edited` (`messageId` of the edited message, new `text`), `message.deleted` (`messageId`), `group.joined` (this account was added to a group), `group.participants` (`action`: add, remove, promote, demote, modify; `participants: [{jid, phone, isMe}]`, `author`). Non-message events carry an `eventId` to de-duplicate on.
+Other events (allEvents only): `message.reaction` (`messageId`, `targetMessageId`, `targetFromMe`, `emoji`, null when removed), `message.edited` (`messageId` of the edited message, new `text`), `message.deleted` (`messageId`), `group.joined` (this account was added to a group, or created one: `author` is the phone of whoever added it, `authorLid` their LID when WhatsApp gave one, `owner` the phone of the group's creator, `participantCount`; `author` is null when WhatsApp hides the number and the bridge can't resolve it), `group.participants` (`action`: add, remove, promote, demote, modify; `participants: [{jid, phone, isMe}]`, `author`). Non-message events carry an `eventId` to de-duplicate on.
 
 ### Delivery and retries
 

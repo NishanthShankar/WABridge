@@ -134,7 +134,14 @@ export function setupWebhookListener(
         timestamp: new Date().toISOString(),
         chatId: g.id,
         group: { id: g.id, name: g.subject ?? null },
-        author: g.ownerPn ? jidToPhone(g.ownerPn) : null,
+        // Who added this account: the person who acted, not the group's creator.
+        author: g.authorPn
+          ? jidToPhone(g.authorPn)
+          : await phoneOrNull(g.author, sock, logger),
+        authorLid: g.author?.endsWith('@lid') ? g.author : null,
+        owner: g.ownerPn
+          ? jidToPhone(g.ownerPn)
+          : await phoneOrNull(g.owner, sock, logger),
         participantCount: g.participants?.length ?? null,
       };
       for (const hook of hooks) fireWebhook(hook, payload, logger);
@@ -482,6 +489,19 @@ export async function resolvePhone(
     logger.warn({ err: (err as Error).message }, 'LID→PN resolution failed');
   }
   return jid.split('@')[0].split(':')[0];
+}
+
+/** Like resolvePhone, but null (not the LID's digits) when a LID can't be mapped to a phone. */
+export async function phoneOrNull(
+  jid: string | null | undefined,
+  sock: WASocket,
+  logger: Logger,
+): Promise<string | null> {
+  if (!jid) return null;
+  const phone = await resolvePhone(jid, sock, logger);
+  return jid.endsWith('@lid') && phone === jid.split('@')[0].split(':')[0]
+    ? null
+    : phone;
 }
 
 /** What a webhook receiver may ask for in the JSON body of its 2xx answer. */
