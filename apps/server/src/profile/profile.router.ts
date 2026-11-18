@@ -11,6 +11,9 @@ import {
   toWhatsAppHours,
 } from './profile.js';
 
+/** How long to wait for WhatsApp to return the catalog. */
+const CATALOG_TIMEOUT_MS = 15_000;
+
 const notConnected = {
   error: 'not_connected',
   message: 'WhatsApp not connected',
@@ -27,6 +30,7 @@ const imageStatus = (err: unknown) => {
  *
  * - GET    /                  name, about, picture and (business accounts) the business profile
  * - PATCH  /                  change the name and/or about text
+ * - GET    /business/catalog  the products of the catalog (business accounts)
  * - PUT    /picture           set the profile picture from an image URL
  * - DELETE /picture           remove it
  * - PATCH  /business          description, address, email, websites, opening hours
@@ -167,6 +171,54 @@ export function createProfileRouter() {
       }
     },
   );
+
+  // The products of this Business account's catalog: their ids are what a product card needs.
+  router.get('/business/catalog', async (c) => {
+    const sock = getContext(c).getSocket();
+    if (!sock) return c.json(notConnected, 503);
+    const limit = Math.min(Math.max(Number(c.req.query('limit')) || 20, 1), 50);
+    try {
+      // WhatsApp can take a minute to answer this for an account without a catalog.
+      const answer = await Promise.race([
+        sock.getCatalog({ limit, cursor: c.req.query('cursor') || undefined }),
+        new Promise<null>((r) => setTimeout(() => r(null), CATALOG_TIMEOUT_MS)),
+      ]);
+      if (!answer)
+        return c.json(
+          {
+            error: 'catalog_timeout',
+            message:
+              'WhatsApp did not answer in time. This usually means the account has no catalog.',
+          },
+          504,
+        );
+      const { products, nextPageCursor } = answer;
+      return c.json({
+        products: products.map((p) => ({
+          productId: p.id,
+          title: p.name,
+          description: p.description || null,
+          currency: p.currency,
+          price: p.price / 1000,
+          retailerId: p.retailerId ?? null,
+          url: p.url ?? null,
+          imageUrl:
+            p.imageUrls?.requested ?? Object.values(p.imageUrls ?? {})[0] ?? null,
+          availability: p.availability,
+          hidden: p.isHidden ?? false,
+        })),
+        nextCursor: nextPageCursor ?? null,
+      });
+    } catch (err) {
+      return c.json(
+        {
+          error: 'catalog_unavailable',
+          message: `${(err as Error).message} (is this a WhatsApp Business account?)`,
+        },
+        502,
+      );
+    }
+  });
 
   return router;
 }

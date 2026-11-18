@@ -1,15 +1,23 @@
 import { z } from 'zod';
 import { POLL_MODES } from '../polls/polls.js';
-import { MEDIA_TYPES } from '../scheduler/message-payload.js';
-import { contactSchema, locationSchema } from '../scheduler/rich-content.js';
+import {
+  MEDIA_TYPES,
+  pickSendOptions,
+  quoteSchema,
+  reactionSchema,
+  sendOptionsProblem,
+  sendOptionsShape,
+} from '../scheduler/message-payload.js';
+import {
+  contactSchema,
+  eventSchema,
+  groupInviteSchema,
+  locationSchema,
+  productSchema,
+} from '../scheduler/rich-content.js';
 
-const messageRef = z.object({
-  messageId: z.string().min(1).max(128),
-  /** true when the referenced message was sent by this account. */
-  fromMe: z.boolean().optional(),
-  /** In groups: who wrote the referenced message (phone or JID). */
-  participant: z.string().min(1).max(64).optional(),
-});
+/** Sent on their own, after any text: at most one per request. */
+const RICH = ['location', 'contact', 'event', 'groupInvite', 'product'] as const;
 
 export const replySchema = z
   .object({
@@ -25,14 +33,18 @@ export const replySchema = z
     location: locationSchema.optional(),
     /** Send a contact card, or up to 10 in one message. Sent on its own, after any text. */
     contact: contactSchema.optional(),
+    /** Send a calendar event card. Sent on its own, after any text. */
+    event: eventSchema.optional(),
+    /** Send an invite card for a group this account is an admin of. Sent on its own, after any text. */
+    groupInvite: groupInviteSchema.optional(),
+    /** Business accounts: send a catalog product card. Sent on its own, after any text. */
+    product: productSchema.optional(),
+    /** viewOnce, fileName, mimetype, mentions: see POST /api/messages */
+    ...sendOptionsShape,
     /** Show the answer as a reply to this message. text is what WhatsApp shows in the quote. */
-    quote: messageRef
-      .extend({ text: z.string().max(1024).optional() })
-      .optional(),
-    /** Phones or JIDs to @mention. Put "@<number>" in text where each should appear. */
-    mentions: z.array(z.string().min(1).max(64)).max(50).optional(),
+    quote: quoteSchema.optional(),
     /** React to a message instead of (or as well as) sending text. emoji "" removes it. */
-    reaction: messageRef.extend({ emoji: z.string().max(16) }).optional(),
+    reaction: reactionSchema.optional(),
     /** Send a poll. options: 2-12 distinct choices. multiple: allow picking more than one. Votes come back as poll.vote webhooks. */
     poll: z
       .object({
@@ -81,7 +93,7 @@ export const replySchema = z
     /**
      * Outside the 24 hour window, queue this through POST /api/messages (2-8 s delay, counts
      * toward the daily cap) instead of answering 409. A poll stays a poll for chats that have
-     * written to this account before, and becomes numbered text for anyone else. reaction, quote, mentions and typing are dropped when queued.
+     * written to this account before, and becomes numbered text for anyone else. reaction and typing are dropped when queued.
      * Use with care: see the docs.
      */
     dontSkip: z.boolean().optional(),
@@ -111,11 +123,17 @@ export const replySchema = z
     path: ['mediaUrl'],
   })
   .refine(
-    (v) => !!v.text || !!v.reaction || !!v.mediaUrl || !!v.poll || !!v.location || !!v.contact,
-    { message: 'Give text, mediaUrl, poll, location, contact, reaction or a mix' },
+    (v) => !!v.text || !!v.reaction || !!v.mediaUrl || !!v.poll || RICH.some((k) => !!v[k]),
+    { message: `Give text, mediaUrl, poll, reaction, ${RICH.join(', ')} or a mix` },
   )
-  .refine((v) => [v.mediaUrl, v.poll, v.location, v.contact].filter(Boolean).length <= 1, {
-    message: 'Send one of mediaUrl, poll, location or contact per request',
+  .refine(
+    (v) => [v.mediaUrl, v.poll, ...RICH.map((k) => v[k])].filter(Boolean).length <= 1,
+    { message: `Send one of mediaUrl, poll, ${RICH.join(', ')} per request` },
+  )
+  .superRefine((v, ctx) => {
+    const options = pickSendOptions({ ...v, mentions: undefined, quote: undefined });
+    const problem = options && sendOptionsProblem(v.mediaUrl ? v.mediaType : null, options);
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
   })
   .refine((v) => !(v.poll && (v.text || v.mediaUrl)), {
     message: 'A poll is sent on its own: put the question in poll.name',

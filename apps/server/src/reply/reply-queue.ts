@@ -7,6 +7,7 @@ import { createSchedulingService } from '../scheduling/scheduling.service.js';
 import { isGroupJid, jidToPhone } from '../webhooks/jid.js';
 import type { ReplyInput } from './reply.schema.js';
 import { foldRichContent } from '../scheduler/rich-content.js';
+import { pickSendOptions } from '../scheduler/message-payload.js';
 
 /** A poll written out as text, for dontSkip to a chat that has never written to this account. */
 export function pollAsText(poll: {
@@ -47,12 +48,11 @@ export async function queueOutsideWindow(params: {
       },
     };
 
-  // A queued message carries one thing: a location or contact card wins over text.
-  const dropped: string[] = (['reaction', 'quote', 'mentions'] as const).filter(
-    (k) => input[k] !== undefined,
-  );
-  if ((input.location || input.contact) && input.text) dropped.push('text');
-  if (!input.text && !input.mediaUrl && !input.poll && !input.location && !input.contact)
+  // A queued message carries one thing: a card (location, contact, event, ...) wins over text.
+  const rich = foldRichContent(input);
+  const dropped: string[] = input.reaction ? ['reaction'] : [];
+  if (rich && input.text) dropped.push('text');
+  if (!input.text && !input.mediaUrl && !input.poll && !rich)
     return {
       status: 409,
       body: {
@@ -117,8 +117,9 @@ export async function queueOutsideWindow(params: {
   let sentAs: 'text' | 'media' | 'poll' | 'pollAsText' = mediaUrl
     ? 'media'
     : 'text';
-  const rich = foldRichContent(input);
+  let options = pickSendOptions(input);
   if (rich) {
+    options = null;
     content = rich.content;
     mediaType = rich.mediaType;
     mediaUrl = undefined;
@@ -128,6 +129,7 @@ export async function queueOutsideWindow(params: {
     // A chat that has written to this account before gets the real poll, with dontSkip too.
     if (input.forcePoll || window.lastInboundAt) {
       content = JSON.stringify(input.poll);
+      options = null;
       mediaType = 'poll';
       mediaUrl = undefined;
       sentAs = 'poll';
@@ -154,6 +156,7 @@ export async function queueOutsideWindow(params: {
       mediaUrl,
       mediaType,
       groupId,
+      options,
     );
     return {
       status: 202,

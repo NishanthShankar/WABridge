@@ -442,11 +442,57 @@ Schedule a message or send immediately. Supports both individual contacts and gr
 | `content` | string | Yes | Message text (min 1 char) |
 | `scheduledAt` | string | No | ISO datetime. Omit to send immediately. |
 | `mediaUrl` | string (URL) | No | URL to media file |
-| `mediaType` | string | If mediaUrl set | `image`, `video`, `audio`, `document`, `sticker` (a WebP image) or `videoNote` (a short square MP4, shown as a round video) |
+| `mediaType` | string | If mediaUrl set | `image`, `video`, `audio`, `document`, `sticker` (a WebP image), `videoNote` (a short square MP4, shown as a round video), `voiceNote` (audio shown as a voice message) or `gif` (a short MP4 that loops silently) |
 | `location` | object | No | A map pin instead of text: `{latitude, longitude, name?, address?}` |
 | `contact` | object or array | No | A contact card instead of text: `{name, phone, org?, email?}`, or up to 10 of them in one message |
+| `event` | object | No | A calendar event card: see [Events](#events) |
+| `groupInvite` | object | No | An invite card for a group this account is an admin of: `{groupId, text?}` |
+| `product` | object | No | Business accounts: a catalog product card. See [Product cards](#product-cards) |
+| `reaction` | object | No | React to a message instead of sending one: `{messageId, emoji, fromMe?, participant?}`. `emoji: ""` removes the reaction |
+| `viewOnce` | boolean | No | `image`, `video`, `audio`, `voiceNote`: the recipient can open it only once |
+| `fileName` | string | No | `document`: the name the recipient sees. Default: the last part of the URL |
+| `mimetype` | string | No | `document`, `audio`, `voiceNote`: the file's type. Default: guessed from the file extension |
+| `mentions` | string[] | No | Phones or JIDs to @mention. Put `@<number>` in `content` where each should appear |
+| `quote` | object | No | Show the message as a reply to another: `{messageId, fromMe?, participant?, text?}`. `text` is what WhatsApp shows inside the quote |
 
-> Provide exactly one of `contactId`, `phone`, or `groupId`. Send one of `mediaUrl`, `location` or `contact` per message. Like polls, a stored location or contact has `mediaType` `location` / `contact` and its fields as JSON in `content`. For group messages, the group must be synced first via `POST /api/groups/sync`.
+> Provide exactly one of `contactId`, `phone`, or `groupId`. Send one of `mediaUrl`, `location`, `contact`, `event`, `groupInvite`, `product` or `reaction` per message. Like polls, these are stored with their kind in `mediaType` and their fields as JSON in `content`. `viewOnce`, `fileName`, `mimetype`, `mentions` and `quote` are for text and media, and come back in the stored message's `options` (a JSON string). For group messages, the group must be synced first via `POST /api/groups/sync`.
+
+#### Voice notes
+
+`"mediaType": "voiceNote"` shows the audio as a voice message, with the waveform and the microphone icon. Use an **OGG file with Opus audio**: WhatsApp's own format. Other formats are sent as given, but some phones won't play them. Plain `"audio"` shows as an audio file, in any common format (MP3, M4A, OGG).
+
+#### Events
+
+```json
+{
+  "groupId": "120363123456@g.us",
+  "event": {
+    "name": "Clinic review call",
+    "description": "Monthly review",
+    "startAt": "2026-11-20T10:00:00+05:30",
+    "endAt": "2026-11-20T10:30:00+05:30",
+    "location": { "latitude": 12.9716, "longitude": 77.5946, "name": "City Clinic" },
+    "call": "video",
+    "extraGuestsAllowed": true
+  }
+}
+```
+
+People answer Going, Maybe or Can't go on the card. Only `name` and `startAt` are required; times need an offset (`+05:30` or `Z`). `call` (`"audio"` or `"video"`) adds a WhatsApp call link to the event. The answers are not delivered as webhooks yet.
+
+#### Group invite cards
+
+`"groupInvite": { "groupId": "120363123456@g.us", "text": "Join the patients group" }` sends a tappable card rather than a bare link. The card is valid for three days. This account must be an admin of the group; otherwise the message fails with that reason.
+
+#### Product cards
+
+For WhatsApp Business accounts. `GET /api/profile/business/catalog` lists the catalog's products in this same shape:
+
+```json
+{ "phone": "919876543210", "product": { "productId": "7210983457", "title": "Heartbeat scan", "currency": "INR", "price": 499, "imageUrl": "https://example.com/scan.jpg", "description": "20 minutes", "url": "https://example.com/scan", "body": "As discussed", "footer": "City Clinic" } }
+```
+
+`productId`, `title`, `currency`, `price` and `imageUrl` are required.
 
 **Response:** `201`
 
@@ -659,6 +705,16 @@ Star or unstar a message on this account's phone (only this account sees stars).
 ```
 
 `fromMe` is taken from what the bridge saw; give it (`true` for a message this account sent) when the message is older than 72 hours. Returns `{ "starred": true, "chatId", "messageId" }`.
+
+### POST /api/messages/pin
+
+Pin a message at the top of its chat **for everyone in it**, or unpin it. In a group, only admins can pin unless the group lets everyone edit its settings.
+
+```json
+{ "chatId": "120363123456@g.us", "messageId": "3EB0...", "pinned": true, "duration": "7d" }
+```
+
+`duration` is `24h`, `7d` (default) or `30d`. `"pinned": false` unpins. As with star, `fromMe` comes from what the bridge saw; for an older message give `fromMe`, and in a group `participant` (who wrote it). Returns `{ "pinned": true, "duration": "7d", "chatId", "messageId" }`.
 
 ---
 
@@ -1099,9 +1155,11 @@ Answer a chat that wrote to this account in the last 24 hours, with text, media 
 | `chatId` or `phone` | string | Exactly one. `chatId` is the webhook's `chatId` (works for groups and LID senders). |
 | `text` | string | Up to 4096 characters. With `mediaUrl` it is the caption (ignored for audio). |
 | `mediaUrl` | string | Public http(s) URL of the file. The bridge downloads it and sends it. |
-| `mediaType` | `image` \| `video` \| `audio` \| `document` \| `sticker` \| `videoNote` | Required with `mediaUrl`. A document's file name is taken from the URL. `sticker`: a WebP image. `videoNote`: a short square MP4, shown as a round video. Neither has a caption. |
+| `mediaType` | `image` \| `video` \| `audio` \| `document` \| `sticker` \| `videoNote` \| `voiceNote` \| `gif` | Required with `mediaUrl`. `sticker`: a WebP image. `videoNote`: a short square MP4, shown as a round video. `voiceNote`: OGG/Opus audio, shown as a voice message. `gif`: a short MP4 that loops. sticker, videoNote, voiceNote and audio have no caption. |
+| `viewOnce`, `fileName`, `mimetype` | | As on [`POST /api/messages`](#post-apimessages). |
 | `location` | `{latitude, longitude, name?, address?}` | Send a map pin, e.g. a clinic's location. Sent after any `text`. |
 | `contact` | `{name, phone, org?, email?}` or an array (up to 10) | Send a contact card, e.g. a doctor's number. Sent after any `text`. |
+| `event`, `groupInvite`, `product` | object | An event card, a group invite card or a catalog product card, as on [`POST /api/messages`](#post-apimessages). Sent after any `text`. |
 | `quote` | `{messageId, fromMe?, participant?, text?}` | Show the answer as a reply to that message. In groups `participant` is who wrote it. |
 | `mentions` | string[] | Phones or JIDs to @mention. Put `@<number>` in `text` where each should show. |
 | `reaction` | `{messageId, emoji, fromMe?, participant?}` | React to a message. `emoji: ""` removes the reaction. |
@@ -1155,7 +1213,7 @@ Without either flag, a chat outside the window gets `409 outside_reply_window`, 
 
 When queued:
 
-- `reaction`, `quote`, `mentions` and `typing` are dropped, and the response lists them in `dropped`. A reaction alone can't be queued (`409`).
+- `reaction` and `typing` are dropped, and the response lists `reaction` in `dropped`. `quote`, `mentions` and the other send options are kept. A reaction alone can't be queued from here (`409`); `POST /api/messages` takes one.
 - The response is `202`:
 
 ```json
@@ -1218,10 +1276,15 @@ Tidy this account's chat list, or set a disappearing-messages timer. Give any of
 | `muted` | `"8h"`, `"1w"`, `"always"`, `false` | Mute notifications; `false` unmutes |
 | `read` | `true` / `false` | `true` clears the unread badge, `false` marks the chat unread. No read receipt (blue ticks) is sent either way |
 | `disappearing` | `"off"`, `"24h"`, `"7d"`, `"90d"` | Disappearing-messages timer. **The other side sees this**: WhatsApp posts "turned on disappearing messages" in the chat. In a group, only admins can change it unless the group allows everyone |
+| `limitSharing` | `true` / `false` | WhatsApp's "advanced chat privacy": while on, people in the chat can't export it or have its media saved automatically. **The other side sees this** |
 
-Response: `{ "chatId", "applied": ["archived", "muted"], "failed": [] }`. A change WhatsApp refused is in `failed` with its `error`; if all were refused the answer is `502 not_changed`. Everything except `disappearing` only changes how the chat looks on this account's phone and linked devices.
+Response: `{ "chatId", "applied": ["archived", "muted"], "failed": [] }`. A change WhatsApp refused is in `failed` with its `error`; if all were refused the answer is `502 not_changed`. Everything except `disappearing` and `limitSharing` only changes how the chat looks on this account's phone and linked devices.
 
 Archive and mark-read work best when the chat had a message since the server last started (the bridge passes WhatsApp the chat's last message, as the phone does).
+
+### POST /api/chats/:id/phone-number
+
+For 1:1 chats where WhatsApp hides phone numbers (the chat shows as a LID or a username). `{ "action": "share" }` shows this account's number to the chat; `{ "action": "request" }` asks the other side for theirs, which they can accept or ignore. Returns `{ "chatId", "action", "messageId" }`.
 
 ### PUT /api/chats/disappearing-default
 
@@ -1641,6 +1704,10 @@ WhatsApp cannot clear a field through this: send a new value instead. Response: 
 
 Set the cover photo from `{ "imageUrl": "https://..." }`. Response: `{ "set": true, "coverPhotoId": "..." }`.
 
+### GET /api/profile/business/catalog
+
+The products of this Business account's catalog: `{ "products": [{ "productId", "title", "description", "currency", "price", "retailerId", "url", "imageUrl", "availability", "hidden" }], "nextCursor" }`. `?limit=` (1-50, default 20) and `?cursor=` page through it. A product here can be sent as a card with `product` on `POST /api/messages`. WhatsApp can be slow to answer for an account with no catalog: after 15 seconds the answer is `504 catalog_timeout`.
+
 ## Status
 
 Post a Status (the 24 hour stories) to chosen people. WhatsApp shows it only to people in the audience **who also have this number saved** in their phone.
@@ -1664,6 +1731,32 @@ Response `201`: `{ "statusId": "3EB0...", "audienceCount": 2, "invalid": [] }`. 
 ### DELETE /api/status/:statusId
 
 Take the Status down for everyone who could see it. Works for Statuses posted in the last 24 hours since the server last started (the bridge remembers who each went to in memory). Response: `{ "statusId", "deleted": true }`.
+
+## Channels
+
+WhatsApp Channels are one-way broadcasts that anyone can follow. A channel id looks like `120363123456789012@newsletter`.
+
+| Call | What it does |
+|---|---|
+| `GET /api/channels/lookup?invite=…` | Read a channel from its `https://whatsapp.com/channel/…` link or the code in it |
+| `GET /api/channels/:id` | Read a channel by id |
+| `POST /api/channels` | Create a channel owned by this account: `{ "name", "description?" }`. At most 2 a day (`429 daily_cap_reached`) |
+| `PATCH /api/channels/:id` | Change `name` and/or `description` (owner only) |
+| `PUT /api/channels/:id/picture` | Set the picture from `{ "imageUrl" }` (owner only) |
+| `DELETE /api/channels/:id/picture` | Remove the picture (owner only) |
+| `POST /api/channels/:id/follow` | Follow the channel |
+| `DELETE /api/channels/:id/follow` | Unfollow it |
+| `POST /api/channels/:id/messages` | Post to a channel this account owns or is an admin of |
+
+A channel reads as `{ "id", "name", "description", "link", "followers", "verified", "role", "muted", "createdAt", "pictureUrl" }`. `role` is this account's part in it: `owner`, `admin`, `subscriber`, or `guest` when it does not follow the channel.
+
+### POST /api/channels/:id/messages
+
+```json
+{ "text": "Open this Sunday 10 to 2", "mediaUrl": "https://example.com/poster.jpg", "mediaType": "image" }
+```
+
+Text, or an `image` or `video` from a public URL with `text` as its caption. Sent at once, not queued, and not counted toward the daily cap. At most 6 posts per channel per minute (`429 too_many_posts`). Response `201`: `{ "id", "messageId" }`.
 
 ## Multiuser tenants
 

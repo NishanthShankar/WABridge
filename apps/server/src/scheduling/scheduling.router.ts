@@ -13,6 +13,11 @@ import {
 import { createSchedulingService } from './scheduling.service.js';
 import { getContext } from '../context.js';
 import { foldRichContent } from '../scheduler/rich-content.js';
+import {
+  type ReactionInput,
+  type SendOptions,
+  pickSendOptions,
+} from '../scheduler/message-payload.js';
 
 /**
  * Create the scheduling API router.
@@ -31,6 +36,31 @@ import { foldRichContent } from '../scheduler/rich-content.js';
  * - PATCH /recurring/:id         Update recurring rule
  * - DELETE /recurring/:id        Delete (disable) recurring rule
  */
+/** The stored form of a request body: what goes into scheduled_messages. */
+export function foldMessage(input: {
+  content: string;
+  mediaUrl?: string;
+  mediaType?: string;
+  reaction?: ReactionInput;
+} & Parameters<typeof foldRichContent>[0] &
+  SendOptions): {
+  content: string;
+  mediaUrl?: string;
+  mediaType?: string;
+  options: SendOptions | null;
+} {
+  if (input.reaction)
+    return { content: JSON.stringify(input.reaction), mediaType: 'reaction', options: null };
+  const rich = foldRichContent(input);
+  if (rich) return { ...rich, options: null };
+  return {
+    content: input.content,
+    mediaUrl: input.mediaUrl,
+    mediaType: input.mediaUrl ? input.mediaType : undefined,
+    options: pickSendOptions(input),
+  };
+}
+
 export function createSchedulingRouter(queue: Queue) {
   const router = new Hono();
 
@@ -45,19 +75,20 @@ export function createSchedulingRouter(queue: Queue) {
     '/',
     zValidator('json', scheduleMessageSchema),
     async (c) => {
-      const { contactId, phone, name, groupId, content, scheduledAt, mediaUrl, mediaType, location, contact } = c.req.valid('json');
-      const rich = foldRichContent({ location, contact });
+      const input = c.req.valid('json');
+      const stored = foldMessage(input);
       try {
         const service = getService(c);
         const msg = await service.scheduleMessage(
-          contactId,
-          rich?.content ?? content,
-          scheduledAt,
-          phone,
-          name,
-          rich ? undefined : mediaUrl,
-          rich?.mediaType ?? mediaType,
-          groupId,
+          input.contactId,
+          stored.content,
+          input.scheduledAt,
+          input.phone,
+          input.name,
+          stored.mediaUrl,
+          stored.mediaType,
+          input.groupId,
+          stored.options,
         );
         return c.json(msg, 201);
       } catch (err) {
@@ -79,10 +110,14 @@ export function createSchedulingRouter(queue: Queue) {
     zValidator('json', bulkScheduleSchema),
     async (c) => {
       const { messages: input } = c.req.valid('json');
-      const messages = input.map(({ location, contact, ...m }) => {
-        const rich = foldRichContent({ location, contact });
-        return rich ? { ...m, content: rich.content, mediaType: rich.mediaType as never, mediaUrl: undefined } : m;
-      });
+      const messages = input.map((m) => ({
+        contactId: m.contactId,
+        phone: m.phone,
+        name: m.name,
+        groupId: m.groupId,
+        scheduledAt: m.scheduledAt,
+        ...foldMessage(m),
+      }));
       try {
         const service = getService(c);
         const result = await service.bulkScheduleMessages(messages);

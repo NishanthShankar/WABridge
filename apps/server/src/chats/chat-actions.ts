@@ -42,10 +42,22 @@ export const chatActionsSchema = z
     read: z.boolean().optional(),
     /** Turn on a disappearing-messages timer for this chat or group (group: admin, if restricted) */
     disappearing: disappearingEnum.optional(),
+    /**
+     * WhatsApp's "advanced chat privacy": while on, people in the chat can't export it or
+     * auto-save its media. Seen by the other side.
+     */
+    limitSharing: z.boolean().optional(),
   })
   .refine((v) => Object.values(v).some((x) => x !== undefined), {
-    message: 'Give pinned, archived, muted, read or disappearing',
+    message:
+      'Give pinned, archived, muted, read, disappearing or limitSharing',
   });
+
+/** POST /api/chats/:id/phone-number */
+export const phoneNumberSchema = z.object({
+  /** share: show this account's number to the chat. request: ask the chat for theirs. */
+  action: z.enum(['share', 'request']),
+});
 
 export const defaultDisappearingSchema = z.object({
   disappearing: disappearingEnum,
@@ -102,6 +114,14 @@ export async function applyChatActions(
             sock.sendMessage(jid, {
               disappearingMessagesInChat: seconds || false,
             }),
+    ]);
+  }
+
+  if (wanted.limitSharing !== undefined) {
+    const on = wanted.limitSharing;
+    steps.push([
+      'limitSharing',
+      () => sock.sendMessage(jid, { limitSharing: on }),
     ]);
   }
 

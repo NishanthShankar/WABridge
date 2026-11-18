@@ -85,6 +85,13 @@
       "when": 1795002000000,
       "tag": "0011_chat_lists",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1795003000000,
+      "tag": "0012_message_options",
+      "breakpoints": true
     }
   ]
 }

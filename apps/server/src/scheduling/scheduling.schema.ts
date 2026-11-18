@@ -1,6 +1,18 @@
 import { z } from 'zod';
-import { MEDIA_TYPES } from '../scheduler/message-payload.js';
-import { contactSchema, locationSchema } from '../scheduler/rich-content.js';
+import {
+  MEDIA_TYPES,
+  pickSendOptions,
+  reactionSchema,
+  sendOptionsProblem,
+  sendOptionsShape,
+} from '../scheduler/message-payload.js';
+import {
+  contactSchema,
+  eventSchema,
+  groupInviteSchema,
+  locationSchema,
+  productSchema,
+} from '../scheduler/rich-content.js';
 
 /** A media URL: http(s) only (the bridge refuses private addresses when it downloads). */
 const httpUrl = z
@@ -11,36 +23,66 @@ const httpUrl = z
 /** Shared media type enum */
 export const mediaTypeEnum = z.enum(MEDIA_TYPES);
 
-const hasBody = (d: { content: string; mediaUrl?: string; location?: unknown; contact?: unknown }) =>
-  d.content.length > 0 || !!d.mediaUrl || !!d.location || !!d.contact;
-const oneKind = (d: { mediaUrl?: string; location?: unknown; contact?: unknown }) =>
-  [d.mediaUrl, d.location, d.contact].filter(Boolean).length <= 1;
-const oneKindMessage = { message: 'Send one of mediaUrl, location or contact per message' };
-
-/** Schema for scheduling a new message (or sending immediately) */
-export const scheduleMessageSchema = z.object({
-  contactId: z.string().uuid().optional(),
-  phone: z.string().optional(),
-  name: z.string().optional(),
-  groupId: z.string().optional(),
+/** What a message carries: text, a media URL, or exactly one of the special kinds. */
+const bodyShape = {
   content: z.string().default(''),
-  scheduledAt: z.string().datetime().optional(),
   mediaUrl: httpUrl.optional(),
   mediaType: mediaTypeEnum.optional(),
   /** Send a map pin instead of text. content is ignored. */
   location: locationSchema.optional(),
   /** Send a contact card (or up to 10) instead of text. content is ignored. */
   contact: contactSchema.optional(),
-}).refine(
-  (d) => d.contactId || d.phone || d.groupId,
-  { message: 'contactId, phone, or groupId is required' },
-).refine(
-  (d) => !d.mediaUrl || d.mediaType,
-  { message: 'mediaType is required when mediaUrl is provided' },
-).refine(oneKind, oneKindMessage).refine(
-  hasBody,
-  { message: 'content, mediaUrl, location or contact is required', path: ['content'] },
-);
+  /** Send a calendar event card instead of text. content is ignored. */
+  event: eventSchema.optional(),
+  /** Send an invite card for a group this account is an admin of. content is ignored. */
+  groupInvite: groupInviteSchema.optional(),
+  /** Business accounts: send a catalog product card. content is ignored. */
+  product: productSchema.optional(),
+  /** React to a message with an emoji instead of sending one. content is ignored. */
+  reaction: reactionSchema.optional(),
+  ...sendOptionsShape,
+};
+const SPECIAL = ['location', 'contact', 'event', 'groupInvite', 'product', 'reaction'] as const;
+type Body = z.infer<z.ZodObject<typeof bodyShape>>;
+
+const specials = (d: Body) => SPECIAL.filter((k) => !!d[k]);
+const hasBody = (d: Body) => d.content.length > 0 || !!d.mediaUrl || specials(d).length > 0;
+const oneKind = (d: Body) => specials(d).length + (d.mediaUrl ? 1 : 0) <= 1;
+const oneKindMessage = {
+  message: `Send one of mediaUrl, ${SPECIAL.join(', ')} per message`,
+};
+const optionsProblem = (d: Body) => {
+  const options = pickSendOptions(d);
+  if (!options) return null;
+  if (specials(d).length) return 'viewOnce, fileName, mimetype, mentions and quote are for text and media';
+  return sendOptionsProblem(d.mediaUrl ? d.mediaType : null, options);
+};
+const recipientShape = {
+  contactId: z.string().uuid().optional(),
+  phone: z.string().optional(),
+  name: z.string().optional(),
+  groupId: z.string().optional(),
+  scheduledAt: z.string().datetime().optional(),
+};
+
+/** Schema for scheduling a new message (or sending immediately). Also each item of a bulk request. */
+export const scheduleMessageSchema = z
+  .object({ ...recipientShape, ...bodyShape })
+  .refine((d) => d.contactId || d.phone || d.groupId, {
+    message: 'contactId, phone, or groupId is required',
+  })
+  .refine((d) => !d.mediaUrl || d.mediaType, {
+    message: 'mediaType is required when mediaUrl is provided',
+  })
+  .refine(oneKind, oneKindMessage)
+  .refine(hasBody, {
+    message: `content, mediaUrl or one of ${SPECIAL.join(', ')} is required`,
+    path: ['content'],
+  })
+  .superRefine((d, ctx) => {
+    const problem = optionsProblem(d);
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
+  });
 
 /** Schema for editing a pending message */
 export const editMessageSchema = z.object({
@@ -147,20 +189,5 @@ export const listRecurringRulesSchema = z.object({
 
 /** Schema for bulk scheduling multiple messages at once */
 export const bulkScheduleSchema = z.object({
-  messages: z.array(z.object({
-    contactId: z.string().uuid().optional(),
-    phone: z.string().optional(),
-    name: z.string().optional(),
-    groupId: z.string().optional(),
-    content: z.string().default(''),
-    scheduledAt: z.string().datetime().optional(),
-    mediaUrl: httpUrl.optional(),
-    mediaType: mediaTypeEnum.optional(),
-    location: locationSchema.optional(),
-    contact: contactSchema.optional(),
-  }).refine(d => d.contactId || d.phone || d.groupId, { message: 'contactId, phone, or groupId required' })
-    .refine(d => !d.mediaUrl || d.mediaType, { message: 'mediaType is required when mediaUrl is provided' })
-    .refine(oneKind, oneKindMessage)
-    .refine(hasBody, { message: 'content, mediaUrl, location or contact is required', path: ['content'] }))
-    .min(1).max(500),
+  messages: z.array(scheduleMessageSchema).min(1).max(500),
 });

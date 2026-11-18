@@ -1,11 +1,16 @@
 import { zValidator } from '@hono/zod-validator';
-import type { WAMessage } from '@whiskeysockets/baileys';
 import type { Queue } from 'bullmq';
 import { Hono } from 'hono';
 import { chatCandidates, replyWindow } from '../chats/chat-state.js';
 import { getContext } from '../context.js';
 import { sendPoll } from '../polls/polls.js';
-import { buildMessagePayload } from '../scheduler/message-payload.js';
+import {
+  buildMessagePayload,
+  pickSendOptions,
+  reactionPayload,
+  relayOptions,
+} from '../scheduler/message-payload.js';
+import { sendStored } from '../scheduler/send-stored.js';
 import { foldRichContent } from '../scheduler/rich-content.js';
 import { errorMessage } from '../net/safe-fetch.js';
 import { REPLY_WINDOW_MS } from '../webhooks/chat-activity.js';
@@ -89,7 +94,7 @@ export function createReplyRouter(queue?: Queue) {
 
     const weight =
       (input.text || input.mediaUrl || input.poll ? MESSAGE_WEIGHT : 0) +
-      (input.location || input.contact ? MESSAGE_WEIGHT : 0) +
+      (foldRichContent(input) ? MESSAGE_WEIGHT : 0) +
       (input.reaction ? REACTION_WEIGHT : 0);
     const bucketKey = `${tenantId}|${jid}`;
     const now = Date.now();
@@ -125,8 +130,6 @@ export function createReplyRouter(queue?: Queue) {
         503,
       );
 
-    const participantJid = (p?: string) =>
-      p ? (toJid(p) ?? undefined) : undefined;
     const result: {
       messageId: string | null;
       reactionId: string | null;
@@ -141,18 +144,10 @@ export function createReplyRouter(queue?: Queue) {
 
     try {
       if (input.reaction) {
-        const r = input.reaction;
-        const sent = await sock.sendMessage(jid, {
-          react: {
-            text: r.emoji,
-            key: {
-              remoteJid: jid,
-              id: r.messageId,
-              fromMe: !!r.fromMe,
-              participant: participantJid(r.participant),
-            },
-          },
-        });
+        const sent = await sock.sendMessage(
+          jid,
+          reactionPayload(jid, input.reaction),
+        );
         result.reactionId = sent?.key?.id ?? null;
       }
 
@@ -169,46 +164,17 @@ export function createReplyRouter(queue?: Queue) {
           await sock.sendPresenceUpdate('paused', jid).catch(() => {});
         }
 
-        let quoted: WAMessage | undefined;
-        if (input.quote) {
-          const q = input.quote;
-          quoted = {
-            key: {
-              remoteJid: jid,
-              id: q.messageId,
-              fromMe: !!q.fromMe,
-              participant: participantJid(q.participant),
-            },
-            message: { conversation: q.text ?? '' },
-          };
-        }
-
-        const mentions = (input.mentions ?? [])
-          .map((m) => toJid(m))
-          .filter((m): m is string => !!m);
-        const content = buildMessagePayload(
-          text,
-          input.mediaUrl,
-          input.mediaType,
-        );
+        const options = pickSendOptions(input) ?? {};
         const sent = await sock.sendMessage(
           jid,
-          mentions.length
-            ? ({ ...content, mentions } as typeof content)
-            : content,
-          quoted ? { quoted } : undefined,
+          buildMessagePayload(text, input.mediaUrl, input.mediaType, options),
+          relayOptions(jid, options),
         );
         result.messageId = sent?.key?.id ?? null;
       }
 
       const rich = foldRichContent(input);
-      if (rich) {
-        const sent = await sock.sendMessage(
-          jid,
-          buildMessagePayload(rich.content, null, rich.mediaType),
-        );
-        result.messageId = sent?.key?.id ?? null;
-      }
+      if (rich) result.messageId = await sendStored(sock, db, jid, rich);
     } catch (err) {
       return c.json(
         { error: 'send_failed', message: errorMessage(err), ...result },

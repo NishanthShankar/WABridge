@@ -39,3 +39,17 @@ All of it belongs in the open-source base. None of it is private, so it doesn't 
 - **Channels:** create, post to, follow and react. Channels are a different product from conversations.
 - **Product catalogue and orders:** a WhatsApp Business shop. A big job, and only useful for e-commerce clients.
 - **WhatsApp Business labels on messages:** overlap with the chat lists we've already built.
+
+## Message types round (2026-11-18, branch `feat/message-types`)
+
+Built and live-tested on Spotters: event cards, voice notes, GIFs, view once, document file name and type, mentions / quotes / reactions on queued sends, group invite cards, message pin, `limitSharing`, channel lookup.
+
+Built, covered by unit tests, not yet tried on a real account:
+- Product cards (no test account has a catalog).
+- Share / request phone number.
+- Channels: create, update, picture, follow, post.
+
+Still open:
+- Event answers (Going / Maybe / Can't go) are not delivered as webhooks.
+- Voice notes are sent as given: an MP3 is not converted to OGG/Opus.
+- Recurring rules can't use the new kinds or options.

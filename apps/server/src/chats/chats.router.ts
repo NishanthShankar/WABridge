@@ -1,7 +1,14 @@
 import { zValidator } from '@hono/zod-validator';
 import { Hono } from 'hono';
 import { getContext } from '../context.js';
-import { DISAPPEARING, applyChatActions, chatActionsSchema, defaultDisappearingSchema } from './chat-actions.js';
+import {
+  DISAPPEARING,
+  applyChatActions,
+  chatActionsSchema,
+  defaultDisappearingSchema,
+  phoneNumberSchema,
+} from './chat-actions.js';
+import { isGroupJid } from '../webhooks/jid.js';
 import { toJid } from '../webhooks/jid.js';
 import {
   chatCandidates,
@@ -109,6 +116,50 @@ export function createChatsRouter() {
       );
     return c.json({ chatId: jid, ...result });
   });
+
+  // Share this account's phone number with a chat, or ask the chat for theirs. For 1:1 chats
+  // where WhatsApp hides numbers (the chat shows as a LID or a username).
+  router.post(
+    '/:id/phone-number',
+    zValidator('json', phoneNumberSchema),
+    async (c) => {
+      const { getSocket } = getContext(c);
+      const jid = toJid(c.req.param('id'));
+      if (!jid || isGroupJid(jid))
+        return c.json(
+          {
+            error: 'invalid_chat',
+            message: 'Give the phone number or JID of a 1:1 chat',
+          },
+          400,
+        );
+      const sock = getSocket();
+      if (!sock)
+        return c.json(
+          { error: 'not_connected', message: 'WhatsApp not connected' },
+          503,
+        );
+      const { action } = c.req.valid('json');
+      try {
+        const sent = await sock.sendMessage(
+          jid,
+          action === 'share'
+            ? { sharePhoneNumber: true }
+            : { requestPhoneNumber: true },
+        );
+        return c.json({
+          chatId: jid,
+          action,
+          messageId: sent?.key?.id ?? null,
+        });
+      } catch (err) {
+        return c.json(
+          { error: 'send_failed', message: (err as Error).message },
+          502,
+        );
+      }
+    },
+  );
 
   router.put(
     '/disappearing-default',

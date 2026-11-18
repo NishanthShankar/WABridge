@@ -153,7 +153,9 @@ export const scheduledMessages = sqliteTable('scheduled_messages', {
   failureReason: text('failure_reason'),
   attempts: integer('attempts').notNull().default(0),
   mediaUrl: text('media_url'),
-  mediaType: text('media_type'),    // image | video | audio | document
+  mediaType: text('media_type'),    // a MEDIA_TYPES value, or poll | location | contact | event | reaction | groupInvite | product
+  /** JSON of SendOptions: viewOnce, fileName, mimetype, mentions, quote */
+  options: text('options'),
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
     .$defaultFn(() => new Date()),

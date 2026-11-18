@@ -30,6 +30,11 @@ export const FEATURES = [
   'profile', // GET/PATCH /api/profile, /picture, PATCH /api/profile/business, PUT /api/profile/business/cover
   'status-posts', // POST /api/status (text, image, video to a chosen audience), DELETE /api/status/:id
   'contact-tags', // /api/contact-tags (new name of /api/labels, which still works)
+  'message-types', // event, groupInvite, product, reaction, voiceNote, gif, viewOnce, fileName, mimetype, mentions and quote on POST /api/messages
+  'message-pin', // POST /api/messages/pin
+  'chat-privacy', // limitSharing on PATCH /api/chats/:id, POST /api/chats/:id/phone-number
+  'channels', // /api/channels: lookup, create, update, follow, post
+  'catalog', // GET /api/profile/business/catalog
   'chat-actions', // PATCH /api/chats/:id (pin, archive, mute, read, disappearing), PUT /api/chats/disappearing-default
   'group-participants', // GET /api/groups/:id/participants
   'group-create', // POST /api/groups, POST /api/groups/:id/participants, GET /api/groups/:id/invite

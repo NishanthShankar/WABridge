@@ -6,6 +6,7 @@ import { normalizeIndianPhone } from '../contacts/phone.js';
 import type { RateLimiter } from '../rate-limit/rate-limiter.js';
 import type { createDatabase } from '../db/client.js';
 import type { AppConfig } from '../config/schema.js';
+import type { SendOptions } from '../scheduler/message-payload.js';
 
 type Database = ReturnType<typeof createDatabase>;
 
@@ -138,7 +139,7 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
      *
      * @throws Error if contact does not exist
      */
-    async scheduleMessage(contactId: string | undefined, content: string, scheduledAt?: string, phone?: string, name?: string, mediaUrl?: string, mediaType?: string, groupId?: string) {
+    async scheduleMessage(contactId: string | undefined, content: string, scheduledAt?: string, phone?: string, name?: string, mediaUrl?: string, mediaType?: string, groupId?: string, options?: SendOptions | null) {
       // Group messages skip contact resolution
       let resolvedContactId: string | null = null;
       if (groupId) {
@@ -181,6 +182,7 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
           status: 'pending',
           mediaUrl: mediaUrl ?? null,
           mediaType: mediaType ?? null,
+          options: options ? JSON.stringify(options) : null,
           createdAt: now,
           updatedAt: now,
         })
@@ -214,6 +216,7 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
       scheduledAt?: string;
       mediaUrl?: string;
       mediaType?: string;
+      options?: SendOptions | null;
     }>) {
       const scheduled: Array<Record<string, unknown>> = [];
       const failed: Array<{ index: number; error: string }> = [];
@@ -273,6 +276,7 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
               status: 'pending',
               mediaUrl: item.mediaUrl ?? null,
               mediaType: item.mediaType ?? null,
+              options: item.options ? JSON.stringify(item.options) : null,
               createdAt: now,
               updatedAt: now,
             })

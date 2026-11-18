@@ -12,7 +12,9 @@ import { isGroupJid, toJid } from '../webhooks/jid.js';
 import {
   deleteSentSchema,
   editSentSchema,
+  PIN_SECONDS,
   forwardSchema,
+  pinMessageSchema,
   starSchema,
 } from './message-actions.schema.js';
 import { findMessage, rememberMessage } from './recent-messages.js';
@@ -109,6 +111,7 @@ const isFail = (r: Resolved | Fail): r is Fail => 'error' in r;
  * - POST /api/messages/delete   delete a message for everyone (own messages; others' as group admin)
  * - POST /api/messages/forward  forward a recent message to another chat or group
  * - POST /api/messages/star     star or unstar a message on this account
+ * - POST /api/messages/pin      pin a message at the top of its chat for everyone, or unpin it
  *
  * Message text is never logged.
  */
@@ -401,6 +404,57 @@ export function createMessageActionsRouter() {
     }
     return c.json({
       starred: input.star,
+      chatId: target.jid,
+      messageId: target.messageId,
+    });
+  });
+
+  router.post('/pin', zValidator('json', pinMessageSchema), async (c) => {
+    const ctx = getContext(c);
+    const input = c.req.valid('json');
+    const target = resolveTarget(ctx, input);
+    if (isFail(target))
+      return c.json(
+        { error: target.error, message: target.message },
+        target.status,
+      );
+    const sock = ctx.getSocket();
+    if (!sock)
+      return c.json(
+        { error: 'not_connected', message: 'WhatsApp not connected' },
+        503,
+      );
+    const cached = findMessage(
+      sock,
+      await chatCandidates(sock, target.jid),
+      target.messageId,
+    );
+    // The key must name the message exactly as WhatsApp knows it: use the remembered one.
+    const key: WAMessageKey = cached?.msg.key ?? {
+      remoteJid: target.jid,
+      id: target.messageId,
+      fromMe: input.fromMe ?? !!target.scheduledId,
+      participant: input.participant
+        ? (toJid(input.participant) ?? undefined)
+        : undefined,
+    };
+    const duration = input.duration ?? '7d';
+    try {
+      // 1 = pin for everyone, 2 = unpin for everyone
+      await sock.sendMessage(target.jid, {
+        pin: key,
+        type: input.pinned ? 1 : 2,
+        ...(input.pinned ? { time: PIN_SECONDS[duration] } : {}),
+      });
+    } catch (err) {
+      return c.json(
+        { error: 'not_changed', message: (err as Error).message },
+        502,
+      );
+    }
+    return c.json({
+      pinned: input.pinned,
+      ...(input.pinned ? { duration } : {}),
       chatId: target.jid,
       messageId: target.messageId,
     });

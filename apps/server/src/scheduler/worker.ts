@@ -8,8 +8,8 @@ import {
   recurringRules,
   scheduledMessages,
 } from '../db/schema.js';
-import { type PollInput, sendPoll } from '../polls/polls.js';
 import { buildMessagePayload } from './message-payload.js';
+import { sendStored } from './send-stored.js';
 import { errorMessage } from '../net/safe-fetch.js';
 
 /**
@@ -192,25 +192,8 @@ async function processSendJob(
     throw new Error('WhatsApp not connected');
   }
 
-  // Send message via Baileys (with optional media). A queued poll keeps its definition as
-  // JSON in content and is sent with sendPoll, so its votes can be read like any other poll.
-  let sentId: string | null;
-  if (msg.mediaType === 'poll') {
-    sentId = await sendPoll(
-      sock,
-      db,
-      jid,
-      JSON.parse(msg.content) as PollInput,
-    );
-  } else {
-    const payload = buildMessagePayload(
-      msg.content,
-      msg.mediaUrl,
-      msg.mediaType,
-    );
-    const result = await sock.sendMessage(jid, payload);
-    sentId = result?.key?.id ?? null;
-  }
+  // Send it: text, media, or one of the kinds stored as JSON in content (poll, event, ...)
+  const sentId = await sendStored(sock, db, jid, msg);
 
   // Update SQLite with success
   const now = new Date();

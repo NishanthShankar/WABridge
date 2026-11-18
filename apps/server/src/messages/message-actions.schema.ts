@@ -78,3 +78,23 @@ export const starSchema = z
     star: z.boolean(),
   })
   .refine(oneTarget, oneTargetMessage);
+
+/** How long a pinned message stays pinned: WhatsApp offers these three. */
+export const PIN_SECONDS = { '24h': 86_400, '7d': 604_800, '30d': 2_592_000 } as const;
+type PinDuration = keyof typeof PIN_SECONDS;
+
+export const pinMessageSchema = z
+  .object({
+    ...target,
+    /** true: this account wrote it. Default: what the bridge remembers, else true for scheduledMessageId. */
+    fromMe: z.boolean().optional(),
+    /** In groups, for someone else's message: who wrote it (phone or JID) */
+    participant: z.string().min(1).max(64).optional(),
+    /** true pins the message at the top of the chat for everyone, false unpins it */
+    pinned: z.boolean(),
+    /** How long it stays pinned. Default 7d. */
+    duration: z
+      .enum(Object.keys(PIN_SECONDS) as [PinDuration, ...PinDuration[]])
+      .optional(),
+  })
+  .refine(oneTarget, oneTargetMessage);
