@@ -65,6 +65,16 @@ export const configSchema = z.object({
    * include such a URL will return null for the URL field.
    */
   public_base_url: z.string().url().optional(),
+  /**
+   * Browser origins allowed to read GET /api/health from another site (CORS), e.g. a
+   * status page. Exact origins, or "https://*.example.com" for any subdomain.
+   * Empty: no cross-site reads (server-to-server calls are not affected).
+   */
+  cors: z
+    .object({
+      health_origins: z.array(z.string().min(1)).default([]),
+    })
+    .default({}),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;

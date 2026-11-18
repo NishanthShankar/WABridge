@@ -44,7 +44,26 @@ const WEB_DIST = '../web/dist';
  * 4. SPA fallback (production: serves index.html for client-side routing)
  * 5. Status page (development fallback when web build doesn't exist)
  */
-export function createApp(plugin: ServerPlugin, messageQueue: Queue, extensions: Extension[] = []) {
+/**
+ * true when origin is in the allowed list: an exact origin, or a "https://*.example.com"
+ * pattern matching one subdomain level of example.com.
+ */
+export function corsAllows(allowed: string[], origin: string): boolean {
+  return allowed.some((entry) => {
+    const wild = entry.match(/^(https?):\/\/\*\.(.+)$/i);
+    if (!wild) return entry.toLowerCase() === origin.toLowerCase();
+    const [, scheme, domain] = wild;
+    const escaped = domain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`^${scheme}://[a-z0-9-]+\\.${escaped}$`, 'i').test(origin);
+  });
+}
+
+export function createApp(
+  plugin: ServerPlugin,
+  messageQueue: Queue,
+  extensions: Extension[] = [],
+  healthOrigins: string[] = [],
+) {
   const app = new Hono();
 
   // Security headers on all responses
@@ -56,12 +75,7 @@ export function createApp(plugin: ServerPlugin, messageQueue: Queue, extensions:
   app.use(
     '/api/health',
     cors({
-      origin: (origin) => {
-        if (origin === 'https://spaxie.vercel.app') return origin;
-        if (origin === 'https://leads.thelandbankers.com') return origin;
-        if (/^https:\/\/[a-z0-9-]+\.paxie\.cloud$/i.test(origin)) return origin;
-        return null;
-      },
+      origin: (origin) => (corsAllows(healthOrigins, origin) ? origin : null),
       allowHeaders: ['x-api-key', 'content-type'],
     }),
   );

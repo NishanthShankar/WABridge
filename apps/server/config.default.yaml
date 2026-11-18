@@ -33,3 +33,10 @@ valkey:
   host: localhost
   port: 6379
   # password:                  # Uncomment if Valkey requires authentication
+
+# Sites whose browser pages may read GET /api/health (e.g. a status page).
+# Exact origins, or https://*.example.com for any subdomain.
+# cors:
+#   health_origins:
+#     - https://status.example.com
+#     - https://*.example.com

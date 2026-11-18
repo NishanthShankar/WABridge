@@ -82,7 +82,7 @@ async function main(): Promise<void> {
   );
 
   // 6. Create Hono app with all routes
-  const { app, injectWebSocket } = createApp(plugin, messageQueue, extensions);
+  const { app, injectWebSocket } = createApp(plugin, messageQueue, extensions, config.cors.health_origins);
 
   // 7. Create BullMQ message worker
   const messageWorker = createMessageWorker(
