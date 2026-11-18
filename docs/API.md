@@ -851,6 +851,12 @@ ws.onmessage = (event) => {
 
 ---
 
+## URLs the bridge downloads
+
+Media (`mediaUrl`, stickers, video notes, Status), group and profile pictures, the business cover photo and webhook deliveries are fetched by the bridge. It only connects to **public internet addresses**: a URL that is not http(s), or whose host is or resolves to a loopback, private, link-local (including cloud metadata), carrier-grade NAT, multicast or reserved address, is refused. This holds on every redirect hop and is checked when connecting, so a hostname that changes its DNS answer can't get around it.
+
+A refused media URL gives `400` on request (literal IP or bad scheme) or fails the send (`send_failed`, or a queued message's `failureReason`) when the hostname resolves to a private address. Self-hosters who serve media from their own network can set the environment variable `WABRIDGE_ALLOW_PRIVATE_URLS=1`.
+
 ## Error Responses
 
 All errors return:

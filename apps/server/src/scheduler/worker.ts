@@ -10,6 +10,7 @@ import {
 } from '../db/schema.js';
 import { type PollInput, sendPoll } from '../polls/polls.js';
 import { buildMessagePayload } from './message-payload.js';
+import { errorMessage } from '../net/safe-fetch.js';
 
 /**
  * Create the BullMQ worker that processes message send jobs.
@@ -94,7 +95,7 @@ export function createMessageWorker(
         .set({
           status: 'failed',
           failedAt: now,
-          failureReason: error.message,
+          failureReason: errorMessage(error),
           attempts: (job.attemptsMade ?? 0) + 1,
           updatedAt: now,
         })

@@ -43,6 +43,7 @@
     "papaparse": "^5.5.3",
     "pino": "^9.6.0",
     "qrcode": "^1.5.4",
+    "undici": "6.23.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^3.24.0"
   },

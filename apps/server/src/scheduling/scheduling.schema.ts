@@ -2,6 +2,12 @@ import { z } from 'zod';
 import { MEDIA_TYPES } from '../scheduler/message-payload.js';
 import { contactSchema, locationSchema } from '../scheduler/rich-content.js';
 
+/** A media URL: http(s) only (the bridge refuses private addresses when it downloads). */
+const httpUrl = z
+  .string()
+  .url()
+  .refine((u) => /^https?:\/\//i.test(u), { message: 'mediaUrl must be http or https' });
+
 /** Shared media type enum */
 export const mediaTypeEnum = z.enum(MEDIA_TYPES);
 
@@ -19,7 +25,7 @@ export const scheduleMessageSchema = z.object({
   groupId: z.string().optional(),
   content: z.string().default(''),
   scheduledAt: z.string().datetime().optional(),
-  mediaUrl: z.string().url().optional(),
+  mediaUrl: httpUrl.optional(),
   mediaType: mediaTypeEnum.optional(),
   /** Send a map pin instead of text. content is ignored. */
   location: locationSchema.optional(),
@@ -40,7 +46,7 @@ export const scheduleMessageSchema = z.object({
 export const editMessageSchema = z.object({
   content: z.string().optional(),
   scheduledAt: z.string().datetime().optional(),
-  mediaUrl: z.string().url().nullable().optional(),
+  mediaUrl: httpUrl.nullable().optional(),
   mediaType: mediaTypeEnum.nullable().optional(),
 }).refine(
   (data) => data.content !== undefined || data.scheduledAt !== undefined
@@ -96,7 +102,7 @@ export const createRecurringRuleSchema = z.object({
   endDate: z.string().datetime().optional(),
   /** Maximum number of occurrences before auto-disabling */
   maxOccurrences: z.number().min(1).optional(),
-  mediaUrl: z.string().url().optional(),
+  mediaUrl: httpUrl.optional(),
   mediaType: mediaTypeEnum.optional(),
 }).refine(
   (d) => d.contactId || d.phone,
@@ -121,7 +127,7 @@ export const updateRecurringRuleSchema = z.object({
   endDate: z.string().datetime().nullable().optional(),
   maxOccurrences: z.number().min(1).nullable().optional(),
   enabled: z.boolean().optional(),
-  mediaUrl: z.string().url().nullable().optional(),
+  mediaUrl: httpUrl.nullable().optional(),
   mediaType: mediaTypeEnum.nullable().optional(),
 }).refine(
   (d) => !(d.mediaUrl && !d.mediaType),
@@ -148,7 +154,7 @@ export const bulkScheduleSchema = z.object({
     groupId: z.string().optional(),
     content: z.string().default(''),
     scheduledAt: z.string().datetime().optional(),
-    mediaUrl: z.string().url().optional(),
+    mediaUrl: httpUrl.optional(),
     mediaType: mediaTypeEnum.optional(),
     location: locationSchema.optional(),
     contact: contactSchema.optional(),

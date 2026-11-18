@@ -17,6 +17,7 @@ import type { createDatabase } from '../db/client.js';
 import { handlePollVote } from '../polls/polls.js';
 import { setupListListener } from '../lists/lists.js';
 import { setupRecentMessages } from '../messages/recent-messages.js';
+import { safeFetch } from '../net/safe-fetch.js';
 import { attachPollJobs } from '../polls/poll-jobs.js';
 import { ackVote, holdVote } from '../polls/stealth-inbox.js';
 import { recordInbound } from './chat-activity.js';
@@ -569,7 +570,8 @@ export function fireWebhook(
 
     let retry = false;
     try {
-      const res = await fetch(url, {
+      // safeFetch: a webhook URL can't point the bridge at this machine or its network.
+      const res = await safeFetch(url, {
         method: 'POST',
         headers,
         body,

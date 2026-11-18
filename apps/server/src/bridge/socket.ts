@@ -16,6 +16,7 @@ import {
   calculateBackoff,
   isRetryWindowExhausted,
 } from './reconnect.js';
+import { safeDispatcher } from '../net/safe-fetch.js';
 
 /** Function signature for broadcasting messages to WebSocket clients */
 export type BroadcastFn = (message: object) => void;
@@ -143,6 +144,9 @@ export class ConnectionManager {
       // NOTE: printQRInTerminal is deprecated in Baileys v7 -- we handle QR display ourselves
       browser: [this.config.whatsapp.browser_name, 'Chrome', '22.0.0'],
       markOnlineOnConnect: this.config.whatsapp.mark_online,
+      // Media sent from a client's URL (mediaUrl, stickers, Status) is downloaded through a
+      // connection that refuses private addresses (see net/safe-fetch.ts).
+      options: { dispatcher: safeDispatcher } as RequestInit,
     });
     this.sock = sock;
 

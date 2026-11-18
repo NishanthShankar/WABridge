@@ -3,6 +3,7 @@ import type makeWASocket from '@whiskeysockets/baileys';
 import type { ParticipantAction } from '@whiskeysockets/baileys';
 import { groups, sessionMeta } from '../db/schema.js';
 import type { createDatabase } from '../db/client.js';
+import { safeFetch } from '../net/safe-fetch.js';
 import { jidToPhone, toJid } from '../webhooks/jid.js';
 import type { GroupSettingsInput } from './groups.schema.js';
 
@@ -249,7 +250,7 @@ export async function updateGroupInfo(
 const MAX_PICTURE_BYTES = 5 * 1024 * 1024;
 
 /** Download an image (http/https only, at most 5 MB, must be an image). */
-export async function fetchImage(url: string, fetchImpl: typeof fetch = fetch): Promise<Buffer> {
+export async function fetchImage(url: string, fetchImpl: typeof fetch = safeFetch): Promise<Buffer> {
   if (!/^https?:\/\//i.test(url)) throw Object.assign(new Error('URL must be http or https'), { statusCode: 400 });
   const res = await fetchImpl(url, { signal: AbortSignal.timeout(20_000), redirect: 'follow' });
   if (!res.ok) throw Object.assign(new Error(`Image download failed: HTTP ${res.status}`), { statusCode: 422 });
@@ -269,7 +270,7 @@ export async function setGroupPicture(
   sock: WASocket,
   jid: string,
   url: string,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = safeFetch,
 ): Promise<void> {
   const image = await fetchImage(url, fetchImpl);
   await sock.updateProfilePicture(jid, image);

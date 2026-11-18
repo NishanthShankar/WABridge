@@ -1,4 +1,5 @@
 import type { AnyMessageContent } from '@whiskeysockets/baileys';
+import { assertPublicUrl } from '../net/safe-fetch.js';
 import { contactPayload, locationPayload } from './rich-content.js';
 
 /**
@@ -24,6 +25,8 @@ export function buildMessagePayload(
   if (!mediaUrl || !mediaType) {
     return { text: content };
   }
+  // Baileys reads a non-http "url" as a local file path; only public http(s) URLs get through.
+  assertPublicUrl(mediaUrl);
 
   switch (mediaType) {
     case 'image':

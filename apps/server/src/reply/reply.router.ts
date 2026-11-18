@@ -7,6 +7,7 @@ import { getContext } from '../context.js';
 import { sendPoll } from '../polls/polls.js';
 import { buildMessagePayload } from '../scheduler/message-payload.js';
 import { foldRichContent } from '../scheduler/rich-content.js';
+import { errorMessage } from '../net/safe-fetch.js';
 import { REPLY_WINDOW_MS } from '../webhooks/chat-activity.js';
 import { toJid } from '../webhooks/jid.js';
 import { queueOutsideWindow } from './reply-queue.js';
@@ -210,7 +211,7 @@ export function createReplyRouter(queue?: Queue) {
       }
     } catch (err) {
       return c.json(
-        { error: 'send_failed', message: (err as Error).message, ...result },
+        { error: 'send_failed', message: errorMessage(err), ...result },
         502,
       );
     }
