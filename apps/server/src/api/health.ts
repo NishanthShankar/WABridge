@@ -21,6 +21,7 @@ export const FEATURES = [
   'reply-dont-skip', // dontSkip / forcePoll on POST /api/reply
   'poll-stealth', // poll.stealth: answers held in memory until acknowledged, never stored
   'poll-lifecycle', // poll ref, deleteAt, delete retries, poll.deleted / poll.delete_failed, lookup by scheduledMessageId
+  'chat-lists', // GET/POST/PATCH/DELETE /api/lists, POST /api/lists/:id/chats, list.updated webhooks
   'api-docs', // GET /api/docs: this whole reference as markdown
   'group-info', // PATCH /api/groups/:id (name, description), PUT/DELETE /api/groups/:id/picture, pictureUrl on create
   'group-participants', // GET /api/groups/:id/participants

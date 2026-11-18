@@ -271,6 +271,31 @@ export const pollVotes = sqliteTable(
   (table) => [index('poll_votes_poll_idx').on(table.pollId)],
 );
 
+/**
+ * Chat lists (the filters above the chat list: Favorites, custom lists such as "RT", and
+ * WhatsApp Business labels). WhatsApp keeps them as labels, synced between the account's
+ * devices; this is the bridge's copy, filled from those sync events.
+ */
+export const chatLists = sqliteTable('chat_lists', {
+  /** WhatsApp's label id */
+  id: text('id').primaryKey(),
+  name: text('name'),
+  color: integer('color'),
+  predefinedId: text('predefined_id'),
+  deleted: integer('deleted', { mode: 'boolean' }).notNull().default(false),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' }).notNull(),
+});
+
+/** Which chats are in which list */
+export const chatListChats = sqliteTable(
+  'chat_list_chats',
+  {
+    listId: text('list_id').notNull(),
+    chatJid: text('chat_jid').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.listId, table.chatJid] })],
+);
+
 // ─── Drizzle Relations (for relational query API) ────────────────────────────
 
 export const contactsRelations = relations(contacts, ({ many }) => ({

@@ -15,6 +15,7 @@ import type { Logger } from 'pino';
 import { setupChatStateListener } from '../chats/chat-state.js';
 import type { createDatabase } from '../db/client.js';
 import { handlePollVote } from '../polls/polls.js';
+import { setupListListener } from '../lists/lists.js';
 import { attachPollJobs } from '../polls/poll-jobs.js';
 import { ackVote, holdVote } from '../polls/stealth-inbox.js';
 import { recordInbound } from './chat-activity.js';
@@ -62,6 +63,8 @@ export function setupWebhookListener(
   setupChatStateListener(sock, db, logger);
   // Poll deletes that are due (deleteAt) or being retried
   attachPollJobs(sock, db, logger);
+  // Chat lists (labels) as they sync
+  setupListListener(sock, db, logger);
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     // Only handle real-time messages, not history sync

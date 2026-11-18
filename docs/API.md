@@ -1268,6 +1268,33 @@ Recent polls, newest first, with results (no vote history). Query: `chatId` or `
 
 Delete the poll for everyone in the chat. `:id` may also be a queued poll's `scheduledMessageId`: if it hasn't gone out yet it is cancelled instead (`{ "deleted": false, "cancelled": true }`). WhatsApp allows this for about 2 days after sending. Votes already received are kept. Reactions on the poll (such as the bridge's 👍) disappear with it (tested 2026-11-18): if the person should keep a record of their answer, send it as a separate message (`confirmText`). Response: `{ "deleted": true, "deletedAt": "..." }`. Deleting an already deleted poll does nothing and returns the same.
 
+## Chat lists
+
+The filters above this account's chat list on the phone: WhatsApp's own (Unread, Favourites, Groups, Communities) and custom lists such as "Clients". Lists are **private to this account**: nobody in the chats sees them or is told. They sync to the account's phone and other linked devices. `GET /api/health` lists `"chat-lists"` on servers with this.
+
+| Call | What it does |
+|---|---|
+| `GET /api/lists` | Every list and the chats in it: `{ synced, lists: [{ id, name, color, builtIn, chats: [{ chatId, phone, isGroup }] }] }` |
+| `GET /api/lists/:id` | One list |
+| `POST /api/lists/sync` | Fetch every list again from WhatsApp. Needed once for a number linked before this feature (`synced: false`); after that, changes made on the phone arrive by themselves. |
+| `POST /api/lists` | `{ "name": "Clients", "color": 0, "chats": ["919812345678", "120363...@g.us"] }` → `201` with the new list. `color` is 0-19 (WhatsApp's palette), `chats` optional. Syncs first if the number never has. `409 name_taken` if a list already has that name. |
+| `PATCH /api/lists/:id` | `{ "name"?, "color"? }`: rename or recolour |
+| `DELETE /api/lists/:id` | Delete the list. The chats in it are not touched. |
+| `POST /api/lists/:id/chats` | `{ "add": [...], "remove": [...] }`: phones or JIDs, 1:1 chats or groups, up to 100 each. Response: `{ results: [{ chat, action, ok, error? }], list }` |
+
+WhatsApp's own lists (`builtIn: true`) fill themselves, so they can't be renamed, deleted or filled here (`409 built_in_list`), and their names can't be reused.
+
+### Webhook: `list.updated`
+
+Sent to catch-all webhooks with `allEvents` whenever a list changes, on the phone or through this API:
+
+```json
+{ "event": "list.updated", "timestamp": "...", "change": "chat_added", "listId": "5", "name": "Clients",
+  "chatId": "919812345678@s.whatsapp.net", "isGroup": false }
+```
+
+`change` is `created`, `edited`, `deleted`, `chat_added` or `chat_removed` (the last two carry `chatId` and `isGroup`). A sync does not fire them for lists that were already there.
+
 ### GET /api/groups/:id/participants
 
 Live member list from WhatsApp: `{ id, name, participants: [{ jid, phone, lid, admin, isMe }] }`. `phone` is null when a member hides their number and the LID can't be mapped.
