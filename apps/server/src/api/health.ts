@@ -31,6 +31,7 @@ export const FEATURES = [
   'status-posts', // POST /api/status (text, image, video to a chosen audience), DELETE /api/status/:id
   'contact-tags', // /api/contact-tags (new name of /api/labels, which still works)
   'message-types', // event, groupInvite, product, reaction, voiceNote, gif, viewOnce, fileName, mimetype, mentions and quote on POST /api/messages
+  'event-responses', // event.response webhooks, event.ref, GET /api/events
   'message-pin', // POST /api/messages/pin
   'chat-privacy', // limitSharing on PATCH /api/chats/:id, POST /api/chats/:id/phone-number
   'channels', // /api/channels: lookup, create, update, follow, post

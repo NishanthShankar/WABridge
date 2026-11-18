@@ -15,6 +15,7 @@ import type { Logger } from 'pino';
 import { setupChatStateListener } from '../chats/chat-state.js';
 import type { createDatabase } from '../db/client.js';
 import { handlePollVote } from '../polls/polls.js';
+import { handleEventResponse } from '../events/events.js';
 import { setupListListener } from '../lists/lists.js';
 import { setupRecentMessages } from '../messages/recent-messages.js';
 import { safeFetch } from '../net/safe-fetch.js';
@@ -235,6 +236,26 @@ async function handleMessage(
     });
     if (!vote) return;
     deliverVote({ ...base, ...vote, messageId: key.id });
+    return;
+  }
+
+  // ── Answers to an event card (Going / Maybe / Can't go): same webhooks as messages ──
+  if (content.encEventResponseMessage) {
+    const answer = handleEventResponse({
+      sock,
+      db,
+      logger,
+      enc: content.encEventResponseMessage,
+      responderJid: authorJid,
+      responderAltJid: altJid,
+      responderPhone: senderPhone,
+    });
+    if (!answer) return;
+    const hooks = isGroup
+      ? service.getAllEvents()
+      : service.getByPhone(senderPhone);
+    for (const hook of hooks)
+      fireWebhook(hook, { ...base, ...answer, messageId: key.id }, logger);
     return;
   }
 

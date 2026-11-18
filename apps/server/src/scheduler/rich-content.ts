@@ -59,6 +59,8 @@ export const eventSchema = z
     call: z.enum(['audio', 'video']).optional(),
     /** Let guests bring others */
     extraGuestsAllowed: z.boolean().optional(),
+    /** Your own id for this event, echoed in event.response webhooks */
+    ref: z.string().min(1).max(128).optional(),
   })
   .refine((e) => !e.endAt || Date.parse(e.endAt) > Date.parse(e.startAt), {
     message: 'endAt must be after startAt',
@@ -132,9 +134,14 @@ export function locationPayload(loc: LocationInput): AnyMessageContent {
   };
 }
 
-export function eventPayload(event: EventInput): AnyMessageContent {
+/** messageSecret: the key answers are encrypted with; Baileys makes one up when not given. */
+export function eventPayload(
+  event: EventInput,
+  messageSecret?: Uint8Array,
+): AnyMessageContent {
   return {
     event: {
+      ...(messageSecret ? { messageSecret } : {}),
       name: event.name,
       ...(event.description ? { description: event.description } : {}),
       startDate: new Date(event.startAt),

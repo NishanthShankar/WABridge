@@ -42,7 +42,7 @@ All of it belongs in the open-source base. None of it is private, so it doesn't 
 
 ## Message types round (2026-11-18, branch `feat/message-types`)
 
-Built and live-tested on Spotters: event cards, voice notes, GIFs, view once, document file name and type, mentions / quotes / reactions on queued sends, group invite cards, message pin, `limitSharing`, channel lookup.
+Built and live-tested on Spotters: event cards and their answers (`event.response` webhook, `GET /api/events`), voice notes, GIFs, view once, document file name and type, mentions / quotes / reactions on queued sends, group invite cards, message pin, `limitSharing`, channel lookup.
 
 Built, covered by unit tests, not yet tried on a real account:
 - Product cards (no test account has a catalog).
@@ -50,6 +50,5 @@ Built, covered by unit tests, not yet tried on a real account:
 - Channels: create, update, picture, follow, post.
 
 Still open:
-- Event answers (Going / Maybe / Can't go) are not delivered as webhooks.
 - Voice notes are sent as given: an MP3 is not converted to OGG/Opus.
 - Recurring rules can't use the new kinds or options.

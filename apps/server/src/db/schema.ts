@@ -347,3 +347,38 @@ export const recurringRulesRelations = relations(recurringRules, ({ one, many })
   }),
   scheduledMessages: many(scheduledMessages),
 }));
+
+// ─── Events (calendar cards) ─────────────────────────────────────────────────
+
+export const events = sqliteTable(
+  'events',
+  {
+    /** WhatsApp message id of the event card */
+    id: text('id').primaryKey(),
+    chatJid: text('chat_jid').notNull(),
+    name: text('name').notNull(),
+    startAt: integer('start_at', { mode: 'timestamp_ms' }).notNull(),
+    endAt: integer('end_at', { mode: 'timestamp_ms' }),
+    /** messageSecret of the event (base64). Answers are encrypted with it. */
+    secret: text('secret').notNull(),
+    /** The client's own id for this event, echoed in event.response */
+    ref: text('ref'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (table) => [index('events_chat_idx').on(table.chatJid)],
+);
+
+/** The latest answer of each person to an event. */
+export const eventResponses = sqliteTable(
+  'event_responses',
+  {
+    eventId: text('event_id').notNull(),
+    responderJid: text('responder_jid').notNull(),
+    responderPhone: text('responder_phone'),
+    /** going | notGoing | maybe */
+    response: text('response').notNull(),
+    extraGuests: integer('extra_guests').notNull().default(0),
+    at: integer('at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.eventId, table.responderJid] })],
+);

@@ -478,7 +478,7 @@ Schedule a message or send immediately. Supports both individual contacts and gr
 }
 ```
 
-People answer Going, Maybe or Can't go on the card. Only `name` and `startAt` are required; times need an offset (`+05:30` or `Z`). `call` (`"audio"` or `"video"`) adds a WhatsApp call link to the event. The answers are not delivered as webhooks yet.
+People answer Going, Maybe or Can't go on the card. Only `name` and `startAt` are required; times need an offset (`+05:30` or `Z`). `call` (`"audio"` or `"video"`) adds a WhatsApp call link to the event. `ref` is your own id for the event. Each answer comes back as an `event.response` webhook, and `GET /api/events` has the totals: see [Events: answers](#events-answers).
 
 #### Group invite cards
 
@@ -1453,6 +1453,50 @@ Recent polls, newest first, with results (no vote history). Query: `chatId` or `
 ### DELETE /api/polls/:id
 
 Delete the poll for everyone in the chat. `:id` may also be a queued poll's `scheduledMessageId`: if it hasn't gone out yet it is cancelled instead (`{ "deleted": false, "cancelled": true }`). WhatsApp allows this for about 2 days after sending. Votes already received are kept. Reactions on the poll (such as the bridge's 👍) disappear with it (tested 2026-11-18): if the person should keep a record of their answer, send it as a separate message (`confirmText`). Response: `{ "deleted": true, "deletedAt": "..." }`. Deleting an already deleted poll does nothing and returns the same.
+
+## Events: answers
+
+An event card is sent with `event` on [`POST /api/messages`](#post-apimessages) or `POST /api/reply`. When someone taps Going, Maybe or Can't go, the bridge decrypts the answer and keeps each person's latest one.
+
+`GET /api/health` lists `"event-responses"` under `features` on servers that do this. Events sent before that (or by a phone, not through the API) can't be read.
+
+### Webhook: `event.response`
+
+Goes to the same webhooks as messages: a webhook registered for the sender's phone, and, for groups, webhooks with `allEvents`.
+
+```json
+{
+  "event": "event.response",
+  "timestamp": "2026-11-18T17:20:00.000Z",
+  "from": "919812345678",
+  "fromLid": null,
+  "pushName": "Asha",
+  "chatId": "120363123456@g.us",
+  "isGroup": true,
+  "group": { "id": "120363123456@g.us", "name": "Clinic team" },
+  "messageId": "3EB0...",
+  "eventId": "3EB0A1...",
+  "ref": "review-nov",
+  "name": "Clinic review call",
+  "startAt": "2026-11-20T04:30:00.000Z",
+  "endAt": "2026-11-20T05:00:00.000Z",
+  "createdAt": "2026-11-18T17:00:00.000Z",
+  "response": "going",
+  "extraGuests": 1,
+  "previousResponse": "maybe",
+  "counts": { "going": 4, "notGoing": 1, "maybe": 0, "extraGuests": 1 }
+}
+```
+
+`response` is `going`, `notGoing` or `maybe`. `previousResponse` is what this person had answered before, or `null` for a first answer. `counts` are the totals after this answer; `counts.extraGuests` adds up the guests of people who are going. `eventId` is the WhatsApp message id of the card.
+
+### GET /api/events/:id
+
+The event with `counts` and `responses`: each person's latest answer as `{ "from", "fromJid", "response", "extraGuests", "at" }`. `:id` is the `eventId`, or the `id` that `POST /api/messages` returned (`409 not_sent_yet` while it is still queued).
+
+### GET /api/events
+
+Recent events, newest first, with `counts` but without `responses`. Filters: `?chatId=` or `?phone=`, `?ref=`, `?limit=` (1-100, default 20).
 
 ## Chat lists
 

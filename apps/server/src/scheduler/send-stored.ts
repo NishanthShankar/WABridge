@@ -7,7 +7,12 @@ import {
   reactionPayload,
   relayOptions,
 } from './message-payload.js';
-import { groupInvitePayload, productPayload } from './rich-content.js';
+import { sendEvent } from '../events/events.js';
+import {
+  type EventInput,
+  groupInvitePayload,
+  productPayload,
+} from './rich-content.js';
 
 /** What a queued message keeps: the columns of scheduled_messages that decide what is sent. */
 export interface StoredMessage {
@@ -20,7 +25,7 @@ export interface StoredMessage {
 
 /**
  * Send a stored message to a chat and return its WhatsApp message id.
- * The kinds that need the socket or the database (poll, reaction, group invite, product) are
+ * The kinds that need the socket or the database (poll, event, reaction, group invite, product) are
  * handled here; everything else is built by buildMessagePayload.
  */
 export async function sendStored(
@@ -32,6 +37,10 @@ export async function sendStored(
   // A queued poll is sent with sendPoll, so its votes can be read like any other poll.
   if (msg.mediaType === 'poll')
     return sendPoll(sock, db, jid, JSON.parse(msg.content) as PollInput);
+
+  // So is a queued event: its answers are decrypted with the secret sendEvent keeps.
+  if (msg.mediaType === 'event')
+    return sendEvent(sock, db, jid, JSON.parse(msg.content) as EventInput);
 
   const options = parseSendOptions(msg.options);
   const payload =

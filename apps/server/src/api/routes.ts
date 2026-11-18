@@ -26,6 +26,7 @@ import { createMessageActionsRouter } from '../messages/message-actions.router.j
 import { createProfileRouter } from '../profile/profile.router.js';
 import { createStatusRouter } from '../status/status.router.js';
 import { createChannelsRouter } from '../channels/channels.router.js';
+import { createEventsRouter } from '../events/events.router.js';
 
 /** Relative path from CWD (apps/server/) to the web build output */
 const WEB_DIST = '../web/dist';
@@ -167,6 +168,7 @@ export function createApp(
   app.route('/api/profile', createProfileRouter());
   app.route('/api/status', createStatusRouter());
   app.route('/api/channels', createChannelsRouter());
+  app.route('/api/events', createEventsRouter());
 
   // The whole API reference as markdown (with extension docs), for agents
   app.route('/api/docs', createDocsRouter(extensions));
