@@ -23,6 +23,8 @@ import { createListsRouter } from '../lists/lists.router.js';
 import { createDocsRouter } from './docs.js';
 import { createReplyRouter } from '../reply/reply.router.js';
 import { createMessageActionsRouter } from '../messages/message-actions.router.js';
+import { createProfileRouter } from '../profile/profile.router.js';
+import { createStatusRouter } from '../status/status.router.js';
 
 /** Relative path from CWD (apps/server/) to the web build output */
 const WEB_DIST = '../web/dist';
@@ -108,7 +110,19 @@ export function createApp(plugin: ServerPlugin, messageQueue: Queue, extensions:
   // Health API
   app.route('/api', createHealthRouter());
 
-  // Labels API
+  // Contact tags: the bridge's own tags on contacts (not WhatsApp's chat labels: those are
+  // /api/lists). /api/labels is the old name, kept working and marked deprecated.
+  app.route('/api/contact-tags', createLabelsRouter());
+  app.use('/api/labels/*', async (c, next) => {
+    await next();
+    c.header('Deprecation', 'true');
+    c.header('Link', '</api/contact-tags>; rel="successor-version"');
+  });
+  app.use('/api/labels', async (c, next) => {
+    await next();
+    c.header('Deprecation', 'true');
+    c.header('Link', '</api/contact-tags>; rel="successor-version"');
+  });
   app.route('/api/labels', createLabelsRouter());
 
   // Messages API: edit, delete and forward sent messages, then scheduling
@@ -135,6 +149,8 @@ export function createApp(plugin: ServerPlugin, messageQueue: Queue, extensions:
   app.route('/api/polls', createPollsRouter(messageQueue));
   app.route('/api/lists', createListsRouter());
   app.route('/api/chats', createChatsRouter());
+  app.route('/api/profile', createProfileRouter());
+  app.route('/api/status', createStatusRouter());
 
   // The whole API reference as markdown (with extension docs), for agents
   app.route('/api/docs', createDocsRouter(extensions));

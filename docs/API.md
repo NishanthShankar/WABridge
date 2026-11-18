@@ -261,11 +261,15 @@ Remove a label from a contact.
 
 ---
 
-## Labels
+## Contact tags
 
-### POST /api/labels
+The bridge's own tags on contacts, used to group and filter them (e.g. "VIP"). They live only in the bridge: WhatsApp never sees them. **Not** WhatsApp Business chat labels: those are [Chat lists](#chat-lists) at `/api/lists`.
 
-Create a label.
+`/api/contact-tags` is the current name. The old `/api/labels` paths still work the same, and answer with a `Deprecation: true` header pointing to `/api/contact-tags`. Tagging a contact stays at `POST /api/contacts/:id/labels`.
+
+### POST /api/contact-tags
+
+Create a tag.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -285,22 +289,22 @@ Create a label.
 
 Returns `409` if the name already exists.
 
-### GET /api/labels
+### GET /api/contact-tags
 
-List all labels. Returns an array of Label objects.
+List all tags.
 
-### PUT /api/labels/:id
+### PUT /api/contact-tags/:id
 
-Update a label. Returns `404` if not found, `409` if name conflicts.
+Update a tag. Returns `404` if not found, `409` if name conflicts.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | string | 1–50 chars |
 | `color` | string \| null | Hex color or `null` to clear |
 
-### DELETE /api/labels/:id
+### DELETE /api/contact-tags/:id
 
-Delete a label. Returns `{ "deleted": true }` or `404`.
+Delete a tag. Returns `{ "deleted": true }` or `404`.
 
 ---
 
@@ -1589,6 +1593,71 @@ The bridge downloads the image (http or https, a JPEG, PNG or WebP, at most 5 MB
 Remove the group picture. Response: `{ "id", "removed": true }`.
 
 `/api/health` lists `group-create`, `group-settings`, `group-info` and `group-membership` when these exist.
+
+## Profile
+
+How this account appears to everyone it writes to. **Everything here is public**: every chat and customer sees it.
+
+### GET /api/profile
+
+```json
+{ "phone": "919812345678", "name": "City Clinic", "about": "Open 9 to 6", "pictureUrl": "https://pps.whatsapp.net/...",
+  "isBusiness": true,
+  "business": { "description": "Family clinic", "address": "MG Road", "email": "desk@clinic.example", "websites": ["https://clinic.example"],
+    "category": "Medical", "hours": { "timezone": "Asia/Kolkata", "days": [ { "day": "mon", "open": "09:00", "close": "18:00" }, { "day": "sun", "mode": "appointmentOnly" } ] } } }
+```
+
+`business` is `null` for a personal (non-Business) WhatsApp account.
+
+### PATCH /api/profile
+
+`{ "name": "City Clinic", "about": "Open 9 to 6" }`: either or both. Name up to 25 characters, about up to 139. Response: `{ "applied": [...], "failed": [] }`.
+
+### PUT /api/profile/picture, DELETE /api/profile/picture
+
+Set the account's picture from `{ "imageUrl": "https://..." }` (JPEG, PNG or WebP, at most 5 MB; WhatsApp crops it to a square), or remove it.
+
+### PATCH /api/profile/business
+
+WhatsApp Business accounts only. Give any of these; the rest stay as they are:
+
+| Field | Type | Notes |
+|---|---|---|
+| `description` | string | Up to 512 characters |
+| `address` | string | Up to 256 |
+| `email` | string | |
+| `websites` | string[] | 1 or 2 http(s) URLs |
+| `hours` | `{ timezone, days }` | `timezone` like `"Asia/Kolkata"`. Each day: `{ "day": "mon", "open": "09:00", "close": "18:00" }` or `{ "day": "sun", "mode": "open24h" \| "appointmentOnly" }`. A day left out shows as closed. |
+
+WhatsApp cannot clear a field through this: send a new value instead. Response: `{ "updated": ["description", "hours"], "business": { ...as now } }`.
+
+### PUT /api/profile/business/cover
+
+Set the cover photo from `{ "imageUrl": "https://..." }`. Response: `{ "set": true, "coverPhotoId": "..." }`.
+
+## Status
+
+Post a Status (the 24 hour stories) to chosen people. WhatsApp shows it only to people in the audience **who also have this number saved** in their phone.
+
+### POST /api/status
+
+```json
+{ "text": "Open this Sunday 10 to 2", "backgroundColor": "#128C7E", "font": 0, "audience": ["919812345678", "919898989898"] }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `text` | string | A text Status, or the caption of an image or video. Up to 700 characters |
+| `mediaUrl` + `mediaType` | string, `image` \| `video` | An image or video Status from a public URL |
+| `backgroundColor`, `font` | `"#RRGGBB"`, 0-5 | Text Status only. Default `#128C7E`, font 0 |
+| `audience` | string[] | Phones or JIDs, up to 256 |
+| `allContacts` | `true` | Instead of `audience`: everyone in `GET /api/contacts` (up to 256) |
+
+Response `201`: `{ "statusId": "3EB0...", "audienceCount": 2, "invalid": [] }`. `invalid` lists audience entries that weren't phone numbers.
+
+### DELETE /api/status/:statusId
+
+Take the Status down for everyone who could see it. Works for Statuses posted in the last 24 hours since the server last started (the bridge remembers who each went to in memory). Response: `{ "statusId", "deleted": true }`.
 
 ## Multiuser tenants
 

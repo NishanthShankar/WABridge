@@ -27,6 +27,9 @@ export const FEATURES = [
   'message-actions', // POST /api/messages/edit, /delete, /forward, /star
   'rich-messages', // location, contact cards, sticker and videoNote media types
   'group-membership', // join/preview by link, leave, revoke invite, join requests, joinApproval setting
+  'profile', // GET/PATCH /api/profile, /picture, PATCH /api/profile/business, PUT /api/profile/business/cover
+  'status-posts', // POST /api/status (text, image, video to a chosen audience), DELETE /api/status/:id
+  'contact-tags', // /api/contact-tags (new name of /api/labels, which still works)
   'chat-actions', // PATCH /api/chats/:id (pin, archive, mute, read, disappearing), PUT /api/chats/disappearing-default
   'group-participants', // GET /api/groups/:id/participants
   'group-create', // POST /api/groups, POST /api/groups/:id/participants, GET /api/groups/:id/invite

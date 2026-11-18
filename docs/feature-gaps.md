@@ -2,12 +2,14 @@
 
 What WABridge doesn't support yet, compared with what WhatsApp offers. Written 2026-11-18.
 
-**Progress (2026-11-18, all deployed and tested live, not committed yet):**
+**Progress (2026-11-18, all deployed and tested live, committed on branch feat/parity-1-4):**
 - #1 edit, delete, forward (+ star): `POST /api/messages/edit|delete|forward|star`.
 - #2 location, contact cards, sticker, videoNote: on `/api/reply` and `/api/messages`.
 - #3 groups: `GET/POST /api/groups/join`, `POST /:id/leave`, `DELETE /:id/invite`, `GET/POST /:id/requests`, `joinApproval` setting. Only the read calls were tested live (writes would touch client groups).
 - #4 `PATCH /api/chats/:id` (pin, archive, mute, read, disappearing), `PUT /api/chats/disappearing-default`.
-- Next: #5 business profile, #6 clean-ups.
+- #5 `GET/PATCH /api/profile`, `/picture`, `PATCH /api/profile/business`, `PUT /api/profile/business/cover` (also covers the account's own name, about and picture). Only reads tested live: writes are public to clients' customers.
+- #6 `/api/contact-tags` (old `/api/labels` still works, sends a Deprecation header); `POST /api/status`, `DELETE /api/status/:id`.
+- Still open: group write calls (join, leave, revoke, approve) untested live; SSRF on every URL the bridge fetches (media, pictures, cover).
 
 All of it belongs in the open-source base. None of it is private, so it doesn't go in an extension.
 
