@@ -67,10 +67,16 @@ function setup() {
   migrate(db, { migrationsFolder: resolve(__dirname, '../../../drizzle') });
   const sent: Array<{ jid: string; content: Record<string, unknown> }> = [];
   const secrets: Buffer[] = [];
+  const ctl = { failDeletes: 0 };
   const sock = {
+    ws: { isOpen: true },
     user: { id: '919800000009:12@s.whatsapp.net', lid: '777888:12@lid' },
     sendPresenceUpdate: async () => {},
     sendMessage: async (jid: string, content: Record<string, unknown>) => {
+      if (content.delete && ctl.failDeletes > 0) {
+        ctl.failDeletes--;
+        throw new Error('delete refused');
+      }
       sent.push({ jid, content });
       const poll = content.poll as { messageSecret?: Buffer } | undefined;
       if (poll?.messageSecret) secrets.push(poll.messageSecret);
@@ -123,7 +129,7 @@ function setup() {
       voterAltJid: CHAT,
       voterPhone: '919800000001',
     });
-  return { db, sent, app, sendPoll, vote, settled };
+  return { db, sent, app, sendPoll, vote, settled, ctl, sock };
 }
 
 describe('poll votes', () => {

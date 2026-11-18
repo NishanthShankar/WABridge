@@ -15,6 +15,7 @@ import type { Logger } from 'pino';
 import { setupChatStateListener } from '../chats/chat-state.js';
 import type { createDatabase } from '../db/client.js';
 import { handlePollVote } from '../polls/polls.js';
+import { attachPollJobs } from '../polls/poll-jobs.js';
 import { ackVote, holdVote } from '../polls/stealth-inbox.js';
 import { recordInbound } from './chat-activity.js';
 import { type GroupCache, createGroupCache } from './group-cache.js';
@@ -59,6 +60,8 @@ export function setupWebhookListener(
   const service = createWebhooksService(db);
   // Presence and read receipts: presence.update and message.read webhooks, GET /api/chats/:id
   setupChatStateListener(sock, db, logger);
+  // Poll deletes that are due (deleteAt) or being retried
+  attachPollJobs(sock, db, logger);
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     // Only handle real-time messages, not history sync
@@ -196,7 +199,7 @@ async function handleMessage(
       isGroup ? service.getAllEvents() : service.getByPhone(senderPhone);
     // A stealth poll's vote lives only in memory until a webhook takes it (2xx) or the client
     // acknowledges it through /api/polls/pending.
-    const deliverVote = (payload: Record<string, unknown>) => {
+    const deliverVote = (payload: Record<string | symbol, unknown>) => {
       if (!payload.stealth) {
         for (const hook of hooksFor()) fireWebhook(hook, payload, logger);
         return;

@@ -6,6 +6,8 @@ import type { Logger } from 'pino';
 import type { createDatabase } from '../db/client.js';
 import { pollVotes, polls } from '../db/schema.js';
 import { jidToPhone, ownJids } from '../webhooks/jid.js';
+import { currentSock, deleteReliably, notifyPoll } from './poll-jobs.js';
+import { AFTER_ACK } from './stealth-inbox.js';
 
 type Database = ReturnType<typeof createDatabase>;
 type WASocket = ReturnType<typeof makeWASocket>;
@@ -29,7 +31,14 @@ export interface PollInput {
   confirmText?: string | false;
   /** Privacy: never store what anyone voted. See stealth-inbox.ts. */
   stealth?: boolean;
+  /** The client's own id, echoed in poll.vote and accepted by GET /api/polls?ref= */
+  ref?: string;
+  /** ISO time: delete the poll for everyone then if nobody has voted. At most 48 hours away. */
+  deleteAt?: string;
 }
+
+/** WhatsApp only deletes for everyone for about two days; stay inside it. */
+export const MAX_DELETE_AT_MS = 48 * 60 * 60 * 1000;
 
 export const DEFAULT_REACTION = '👍';
 export const DEFAULT_DELETE_CONFIRM = 'You chose {{option}}';
@@ -73,6 +82,11 @@ export async function sendPoll(
   const id = sent?.key?.id ?? null;
   if (!id) return null;
   const b = pollBehaviour(input);
+  const deleteAt = input.deleteAt
+    ? new Date(
+        Math.min(Date.parse(input.deleteAt), Date.now() + MAX_DELETE_AT_MS),
+      )
+    : null;
   db.insert(polls)
     .values({
       id,
@@ -85,6 +99,9 @@ export async function sendPoll(
       confirmText: b.confirmText,
       secret: secret.toString('base64'),
       stealth: !!input.stealth,
+      ref: input.ref ?? null,
+      deleteAt,
+      deleteReason: deleteAt ? 'expired' : null,
       createdAt: new Date(),
     })
     .run();
@@ -183,7 +200,9 @@ export function judgeVote(
     (v) =>
       v.counted &&
       v.note !== 'settling' &&
-      (v.note === 'hidden' || (JSON.parse(v.selected) as string[]).length > 0),
+      (v.note === 'hidden' ||
+        v.note === 'awaiting_ack' ||
+        (JSON.parse(v.selected) as string[]).length > 0),
   );
   if (poll.mode === 'updateEveryTime')
     return { counted: true, note: null, first: !hadCounted };
@@ -213,9 +232,18 @@ export async function deletePoll(
     delete: { remoteJid: poll.chatJid, id: poll.id, fromMe: true },
   });
   db.update(polls)
-    .set({ deletedAt: new Date() })
+    .set({ deletedAt: new Date(), deleteAt: null })
     .where(eq(polls.id, poll.id))
     .run();
+}
+
+function lifecycle(poll: PollRow) {
+  return {
+    ref: poll.ref,
+    votedAt: poll.votedAt?.toISOString() ?? null,
+    deleteAt: poll.deleteAt?.toISOString() ?? null,
+    deleteFailedAt: poll.deleteFailedAt?.toISOString() ?? null,
+  };
 }
 
 /** Each voter's latest counted choice, and a tally per option. */
@@ -232,6 +260,7 @@ export function summarisePoll(poll: PollRow, votes: VoteRow[]) {
       mode: poll.mode,
       react: poll.react,
       confirmText: poll.confirmText,
+      ...lifecycle(poll),
       stealth: true,
       createdAt: poll.createdAt.toISOString(),
       deletedAt: poll.deletedAt?.toISOString() ?? null,
@@ -263,6 +292,7 @@ export function summarisePoll(poll: PollRow, votes: VoteRow[]) {
     mode: poll.mode,
     react: poll.react,
     confirmText: poll.confirmText,
+    ...lifecycle(poll),
     stealth: false,
     createdAt: poll.createdAt.toISOString(),
     deletedAt: poll.deletedAt?.toISOString() ?? null,
@@ -280,10 +310,16 @@ export function summarisePoll(poll: PollRow, votes: VoteRow[]) {
 
 export function listPolls(
   db: Database,
-  opts: { chatJid?: string; limit: number },
+  opts: { chatJid?: string; ref?: string; limit: number },
 ): PollRow[] {
-  const q = db.select().from(polls);
-  return (opts.chatJid ? q.where(and(eq(polls.chatJid, opts.chatJid))) : q)
+  const where = [
+    opts.chatJid ? eq(polls.chatJid, opts.chatJid) : undefined,
+    opts.ref ? eq(polls.ref, opts.ref) : undefined,
+  ].filter((w) => w !== undefined);
+  return db
+    .select()
+    .from(polls)
+    .where(where.length ? and(...where) : undefined)
     .orderBy(desc(polls.createdAt))
     .limit(opts.limit)
     .all();
@@ -296,14 +332,13 @@ export function listPolls(
 export const SETTLE_MS = 15_000;
 const settling = new Map<string, ReturnType<typeof setTimeout>>();
 
-/** React, confirm and delete, as the poll's mode says, after a vote that counts. */
-async function respond(
+/** React and send confirmText, as the poll says, after a vote that counts. */
+async function acknowledgeInChat(
   sock: WASocket,
-  db: Database,
   logger: Logger,
   poll: PollRow,
   selected: string[],
-): Promise<boolean> {
+): Promise<void> {
   const pollKey = { remoteJid: poll.chatJid, id: poll.id, fromMe: true };
   try {
     if (poll.react) {
@@ -316,17 +351,26 @@ async function respond(
         text: fillConfirm(poll.confirmText, poll, selected),
       });
     }
-    if (poll.mode === 'deleteAfterVote') {
-      await deletePoll(sock, db, poll);
-      return true;
-    }
   } catch (err) {
     logger.warn(
       { pollId: poll.id, err: (err as Error).message },
       'Poll vote: response failed',
     );
   }
-  return false;
+}
+
+/** React, confirm and (deleteAfterVote) delete. Returns true if the poll was deleted now. */
+async function respond(
+  sock: WASocket,
+  db: Database,
+  logger: Logger,
+  poll: PollRow,
+  selected: string[],
+): Promise<boolean> {
+  await acknowledgeInChat(sock, logger, poll, selected);
+  if (poll.mode !== 'deleteAfterVote') return false;
+  // A failed delete is retried by the poll sweeper (poll-jobs.ts)
+  return deleteReliably(sock, db, logger, poll, 'voted');
 }
 
 function votePayload(
@@ -355,6 +399,7 @@ function votePayload(
     event: 'poll.vote',
     pollId: poll.id,
     pollName: poll.name,
+    ref: poll.ref,
     mode: poll.mode,
     multiple: poll.selectableCount === 0,
     voterPhone: voterPhone ?? jidToPhone(voter),
@@ -366,7 +411,99 @@ function votePayload(
     current,
     pollDeleted: deleted || !!getPoll(db, poll.id)?.deletedAt,
     stealth: poll.stealth,
+  } as Record<string | symbol, unknown>;
+}
+
+function markVoted(db: Database, pollId: string): void {
+  db.update(polls)
+    .set({ votedAt: new Date() })
+    .where(eq(polls.id, pollId))
+    .run();
+}
+
+/**
+ * A vote that counts and is final: record it, respond, and build the payload.
+ * Stealth deleteAfterVote holds the response (confirmText and delete) until the client
+ * acknowledges the vote; if it never does, the lock is released so the person can vote again.
+ */
+async function finalVote(
+  sock: WASocket,
+  db: Database,
+  logger: Logger,
+  poll: PollRow,
+  voter: string,
+  voterPhone: string | null,
+  selected: string[],
+  settlingRowId: number | null,
+): Promise<Record<string | symbol, unknown>> {
+  if (selected.length) markVoted(db, poll.id);
+  const verdict = { counted: true, note: null };
+  if (!poll.stealth) {
+    if (settlingRowId !== null)
+      db.update(pollVotes)
+        .set({ note: null })
+        .where(eq(pollVotes.id, settlingRowId))
+        .run();
+    else
+      db.insert(pollVotes)
+        .values({
+          pollId: poll.id,
+          voterJid: voter,
+          voterPhone,
+          selected: JSON.stringify(selected),
+          counted: true,
+          note: null,
+          at: new Date(),
+        })
+        .run();
+    const deleted = await respond(sock, db, logger, poll, selected);
+    return votePayload(db, poll, voter, voterPhone, selected, verdict, deleted);
+  }
+  if (poll.mode !== 'deleteAfterVote') {
+    recordHidden(db, poll, voter, voterPhone, 'hidden');
+    const deleted = await respond(sock, db, logger, poll, selected);
+    return votePayload(db, poll, voter, voterPhone, selected, verdict, deleted);
+  }
+  const rowId = recordHidden(db, poll, voter, voterPhone, 'awaiting_ack');
+  const payload = votePayload(
+    db,
+    poll,
+    voter,
+    voterPhone,
+    selected,
+    verdict,
+    false,
+  );
+  payload.awaitingAck = true;
+  payload[AFTER_ACK] = {
+    onAck: async () => {
+      db.update(pollVotes)
+        .set({ note: 'hidden' })
+        .where(eq(pollVotes.id, rowId as number))
+        .run();
+      const fresh = getPoll(db, poll.id);
+      if (!fresh || fresh.deletedAt) return;
+      const live = currentSock(db) ?? sock;
+      await acknowledgeInChat(live, logger, fresh, selected);
+      if (await deleteReliably(live, db, logger, fresh, 'voted'))
+        notifyPoll(db, logger, getPoll(db, poll.id) ?? fresh, {
+          event: 'poll.deleted',
+          reason: 'voted',
+        });
+    },
+    onExpire: () => releaseVote(db, poll.id, rowId as number),
   };
+  return payload;
+}
+
+/** Forget an unacknowledged stealth vote, so the person can vote again. */
+export function releaseVote(db: Database, pollId: string, rowId: number): void {
+  db.delete(pollVotes)
+    .where(and(eq(pollVotes.id, rowId), eq(pollVotes.note, 'awaiting_ack')))
+    .run();
+  const stillCounted = votesFor(db, pollId).some((v) => v.counted);
+  if (!stillCounted)
+    db.update(polls).set({ votedAt: null }).where(eq(polls.id, pollId)).run();
 }
 
 /**
@@ -374,6 +511,7 @@ function votePayload(
  * (reaction, confirmation text, delete), and return the webhook payload fields.
  * Returns null for votes on polls this bridge didn't send (or can't decrypt).
  * onSettled gets a second payload when a multi-choice vote becomes final later.
+ * A payload with an AFTER_ACK entry must be held until the client acknowledges it.
  */
 export async function handlePollVote(params: {
   sock: WASocket;
@@ -383,9 +521,9 @@ export async function handlePollVote(params: {
   voterJid: string;
   voterAltJid?: string | null;
   voterPhone: string | null;
-  onSettled?: (payload: Record<string, unknown>) => void;
+  onSettled?: (payload: Record<string | symbol, unknown>) => void;
   settleMs?: number;
-}): Promise<Record<string, unknown> | null> {
+}): Promise<Record<string | symbol, unknown> | null> {
   const { sock, db, logger, update, voterJid, voterAltJid, voterPhone } =
     params;
   const pollId = update.pollCreationMessageKey?.id;
@@ -426,22 +564,16 @@ export async function handlePollVote(params: {
           void (async () => {
             const fresh = getPoll(db, pollId);
             if (!fresh || fresh.deletedAt) return;
-            if (row)
-              db.update(pollVotes)
-                .set({ note: null })
-                .where(eq(pollVotes.id, row.id))
-                .run();
-            else recordHidden(db, fresh, voter, voterPhone);
-            const deleted = await respond(sock, db, logger, fresh, selected);
             params.onSettled?.(
-              votePayload(
+              await finalVote(
+                sock,
                 db,
+                logger,
                 fresh,
                 voter,
                 voterPhone,
                 selected,
-                { counted: true, note: null },
-                deleted,
+                row?.id ?? null,
               ),
             );
           })().catch((err) =>
@@ -464,9 +596,10 @@ export async function handlePollVote(params: {
     );
   }
 
-  if (poll.stealth) {
-    if (verdict.counted) recordHidden(db, poll, voter, voterPhone);
-  } else {
+  if (verdict.counted && !verdict.note)
+    return finalVote(sock, db, logger, poll, voter, voterPhone, selected, null);
+
+  if (!poll.stealth) {
     db.insert(pollVotes)
       .values({
         pollId,
@@ -479,11 +612,7 @@ export async function handlePollVote(params: {
       })
       .run();
   }
-
-  const deleted = verdict.counted
-    ? await respond(sock, db, logger, poll, selected)
-    : false;
-  return votePayload(db, poll, voter, voterPhone, selected, verdict, deleted);
+  return votePayload(db, poll, voter, voterPhone, selected, verdict, false);
 }
 
 /** Supersede a voter's settling rows and add this tap as the new settling row. */
@@ -520,23 +649,29 @@ function settleRows(
     .get();
 }
 
-/** A stealth vote that counts: remember that they voted (for locks), never what. */
+/**
+ * A stealth vote that counts: remember that they voted (for locks), never what.
+ * Returns the row id, or null when nothing needs keeping (updateEveryTime).
+ */
 function recordHidden(
   db: Database,
   poll: PollRow,
   voter: string,
   voterPhone: string | null,
-): void {
-  if (poll.mode === 'updateEveryTime') return; // nothing to lock, so nothing to keep
-  db.insert(pollVotes)
+  note: 'hidden' | 'awaiting_ack',
+): number | null {
+  if (poll.mode === 'updateEveryTime') return null; // nothing to lock, so nothing to keep
+  return db
+    .insert(pollVotes)
     .values({
       pollId: poll.id,
       voterJid: voter,
       voterPhone,
       selected: '[]',
       counted: true,
-      note: 'hidden',
+      note,
       at: new Date(),
     })
-    .run();
+    .returning({ id: pollVotes.id })
+    .get().id;
 }

@@ -55,6 +55,20 @@ export const replySchema = z
          * memory until acknowledged (webhook 2xx or POST /api/polls/pending/ack), at most an hour.
          */
         stealth: z.boolean().optional(),
+        /** Your own id for this poll, echoed in poll.vote. Not personal data. */
+        ref: z.string().min(1).max(128).optional(),
+        /** ISO time: delete for everyone then if nobody voted. Within 48 hours. */
+        deleteAt: z
+          .string()
+          .datetime({ offset: true })
+          .refine((t) => Date.parse(t) > Date.now(), {
+            message: 'deleteAt must be in the future',
+          })
+          .refine((t) => Date.parse(t) <= Date.now() + 48 * 3_600_000, {
+            message:
+              'deleteAt must be within 48 hours: WhatsApp only deletes for everyone for about two days',
+          })
+          .optional(),
       })
       .optional(),
     /** Show "typing…" for a moment before the text. Default true. */

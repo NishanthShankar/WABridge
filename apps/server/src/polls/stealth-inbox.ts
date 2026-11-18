@@ -9,10 +9,24 @@ import { randomUUID } from 'node:crypto';
  */
 export const HOLD_MS = 60 * 60 * 1000;
 
+/**
+ * Symbol key on a payload: what to do when it is acknowledged or expires. Symbol keys are
+ * left out of JSON, so they never reach a webhook or an API response.
+ */
+export const AFTER_ACK = Symbol('afterAck');
+
+export interface AckHandlers {
+  onAck?: () => Promise<void> | void;
+  onExpire?: () => void;
+}
+
+type Payload = Record<string | symbol, unknown>;
+
 interface Held {
-  payload: Record<string, unknown>;
+  payload: Payload;
   expiresAt: number;
   timer: ReturnType<typeof setTimeout>;
+  handlers?: AckHandlers;
 }
 
 /** One inbox per tenant, keyed by the tenant's database handle. */
@@ -27,45 +41,62 @@ function inboxFor(owner: object): Map<string, Held> {
   return box;
 }
 
+function expire(owner: object, voteId: string): void {
+  const box = inboxFor(owner);
+  const held = box.get(voteId);
+  if (!held) return;
+  clearTimeout(held.timer);
+  box.delete(voteId);
+  try {
+    held.handlers?.onExpire?.();
+  } catch {
+    // releasing a lock must not break the caller
+  }
+}
+
 /** Hold a stealth vote until acknowledged. Adds voteId and expiresAt to the payload. */
 export function holdVote(
   owner: object,
-  payload: Record<string, unknown>,
+  payload: Payload,
   holdMs = HOLD_MS,
-): Record<string, unknown> {
+): Payload {
   const box = inboxFor(owner);
   const voteId = randomUUID();
   const expiresAt = Date.now() + holdMs;
-  const held = {
+  const handlers = payload[AFTER_ACK] as AckHandlers | undefined;
+  const held: Payload = {
     ...payload,
     voteId,
     expiresAt: new Date(expiresAt).toISOString(),
   };
-  const timer = setTimeout(() => box.delete(voteId), holdMs);
+  delete held[AFTER_ACK];
+  const timer = setTimeout(() => expire(owner, voteId), holdMs);
   timer.unref?.();
-  box.set(voteId, { payload: held, expiresAt, timer });
+  box.set(voteId, { payload: held, expiresAt, timer, handlers });
   return held;
 }
 
-/** Forget a held vote. Returns false if it was already gone. */
+/** Forget a held vote and run its onAck. Returns false if it was already gone. */
 export function ackVote(owner: object, voteId: string): boolean {
   const box = inboxFor(owner);
   const held = box.get(voteId);
   if (!held) return false;
   clearTimeout(held.timer);
-  return box.delete(voteId);
+  box.delete(voteId);
+  if (held.handlers?.onAck)
+    void Promise.resolve()
+      .then(() => held.handlers?.onAck?.())
+      .catch(() => {});
+  return true;
 }
 
 /** Held votes, oldest first, optionally for one poll. */
-export function pendingVotes(
-  owner: object,
-  pollId?: string,
-): Record<string, unknown>[] {
+export function pendingVotes(owner: object, pollId?: string): Payload[] {
   const now = Date.now();
-  const out: Record<string, unknown>[] = [];
+  const out: Payload[] = [];
   for (const [id, h] of inboxFor(owner)) {
     if (h.expiresAt <= now) {
-      ackVote(owner, id);
+      expire(owner, id);
       continue;
     }
     if (!pollId || h.payload.pollId === pollId) out.push(h.payload);

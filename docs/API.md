@@ -1147,6 +1147,8 @@ Send a poll with `POST /api/reply` (so the 24 hour window applies; to reach a ch
 | `react` | string \| `false` | Emoji the bridge reacts to the poll with after a vote that counts. Default `👍`. `false` turns it off. Not used by `deleteAfterVote`. |
 | `confirmText` | string \| `false` | Message sent after a vote that counts. `{{option}}` becomes the choice (several joined with ", "), `{{poll}}` the question. Default: none, except `deleteAfterVote`, which defaults to `You chose {{option}}`. `false` turns it off. |
 | `stealth` | boolean | Privacy: answers are never written to the database or the logs. See [Stealth polls](#stealth-polls). Default `false`. |
+| `ref` | string | Your own id for this poll, up to 128 characters. Echoed in `poll.vote`, `poll.deleted` and `poll.delete_failed`, and searchable with `GET /api/polls?ref=`. Use an id, not personal data. |
+| `deleteAt` | string | ISO time (with offset) to delete the poll for everyone **if nobody has voted by then**. Must be in the future and within 48 hours: WhatsApp only deletes for everyone for about two days. Checked every 10 seconds. A queued poll that goes out after its `deleteAt` is deleted at the next check. |
 
 The response's `messageId` is the poll's id.
 
@@ -1159,6 +1161,8 @@ WhatsApp always lets people change their vote, and has no setting to stop it. Th
 | `updateEveryTime` | Every vote. The latest one is the person's answer. Removing all ticks clears it. | Reacts (and sends `confirmText` if set) after each vote. Removing the vote removes the reaction. |
 | `lockFirstVote` | The first vote only. Later changes are recorded with `note: "locked"` and don't count. | Reacts and sends `confirmText` once, after the first vote. Their phone still shows a changed vote; only the bridge keeps the first. |
 | `deleteAfterVote` | The first vote. | Sends `confirmText` (default `You chose {{option}}`), then deletes the poll for everyone, so it can't be changed. Meant for 1:1 chats: in a group, the first voter ends the poll for everyone. |
+
+**Deletes are retried.** If deleting a poll fails (`deleteAfterVote`, `deleteAt`), the bridge tries again after 10 s, 1 min, 5 min, 15 min and 1 h. Each later success sends `poll.deleted`; after the last failure it sends `poll.delete_failed` and stops. A disconnected server waits for the connection without using up tries. `DELETE /api/polls/:id` is not retried: it answers `502` and you decide.
 
 **Multi-choice polls** (`multiple: true`): WhatsApp sends a new vote on every tap. In `lockFirstVote` and `deleteAfterVote` the bridge waits until the person has stopped changing their ticks for 15 seconds, then locks (or deletes). Votes during that time arrive with `note: "settling"`, and one more `poll.vote` with `note: null` arrives when it becomes final. A server restart during those 15 seconds leaves the vote counted but unconfirmed.
 
@@ -1191,6 +1195,18 @@ Sent to the same webhooks as messages from that chat (1:1: the sender's phone we
 - `counted`: whether the mode accepted it.
 - `note`: `null` (counts, final), `settling` (multi-choice, still tapping), `locked`, `poll_deleted`, `empty` or `superseded`.
 - `current`: what counts for this person now. **Use this as their answer.**
+- `ref`: the `ref` you sent the poll with, or `null`.
+
+### Webhooks: `poll.deleted`, `poll.delete_failed`
+
+Sent to the same webhooks as the poll's votes when the bridge deletes a poll **later** than the vote that caused it: at `deleteAt` (`reason: "expired"`), after a retry (`reason: "voted"`), or after a stealth vote was acknowledged (`reason: "voted"`). A delete that happens straight after a vote is reported in that vote's `pollDeleted: true` instead.
+
+```json
+{ "event": "poll.deleted", "timestamp": "...", "chatId": "919812345678@s.whatsapp.net", "isGroup": false,
+  "pollId": "3EB0...", "pollName": "Which slot works?", "ref": "q-42", "reason": "expired", "attempts": 1 }
+```
+
+`poll.delete_failed` has the same fields plus `error`, and means the poll is still on their phone. `GET /api/polls/:id` shows it as `deleteFailedAt`.
 
 Only polls sent after this feature was deployed can be read: a vote is encrypted with a secret the bridge keeps when it sends the poll.
 
@@ -1206,6 +1222,7 @@ For questions whose answers must not be kept (health, money, anything private), 
 - **Locks still work.** In `lockFirstVote` and `deleteAfterVote` the bridge keeps one row saying *that* this person voted (with no answer), so later changes are still refused. `updateEveryTime` keeps nothing at all.
 - **What you get.** `current` is the answer only on the vote that is final for this person (`counted: true`, `note: null`); on locked, settling and other votes it is `null`, because the bridge no longer knows the earlier answer. Keep the final answer on your side.
 - **Results are not available.** `GET /api/polls/:id` returns `"stealth": true`, `"results": null` and `"votes": []`.
+- **`deleteAfterVote` waits for you.** The poll is deleted, and `confirmText` sent, only once you acknowledge the vote (webhook `2xx` or `POST /api/polls/pending/ack`). The vote arrives with `"awaitingAck": true`, and `poll.deleted` follows once the poll is gone. If the vote expires unacknowledged, or the server restarts first, the poll stays on their phone and the lock is released: their next change of vote counts as a new vote.
 - **Mind the chat itself.** `confirmText` with `{{option}}` writes the answer into the WhatsApp chat, where both phones keep it. Turn it off (`"confirmText": false`) if that matters; `deleteAfterVote` uses it by default.
 
 ```json
@@ -1222,6 +1239,8 @@ Stealth votes not yet acknowledged, oldest first. `?pollId=` for one poll. Respo
 Body `{ "voteIds": ["6c1e7a4e-...", ...] }` (1 to 500). Deletes them now. Response: `{ "acked": 1, "unknown": 0 }`; `unknown` counts ids that were already gone (acknowledged, expired or lost in a restart).
 
 ### GET /api/polls/:id
+
+`:id` is the poll id, or the `scheduledMessageId` a queued poll (`dontSkip` / `forcePoll`) returned. A queued poll that hasn't gone out yet answers `409 not_sent_yet` with its `status`. The response also has `ref`, `votedAt` (when someone last voted, never what), `deleteAt` and `deleteFailedAt`.
 
 The poll, results and every vote received, oldest first.
 
@@ -1243,11 +1262,11 @@ The poll, results and every vote received, oldest first.
 
 ### GET /api/polls
 
-Recent polls, newest first, with results (no vote history). Query: `chatId` or `phone` to filter by chat, `limit` (default 20, max 100).
+Recent polls, newest first, with results (no vote history). Query: `chatId` or `phone` to filter by chat, `ref` for your own id, `limit` (default 20, max 100).
 
 ### DELETE /api/polls/:id
 
-Delete the poll for everyone in the chat. WhatsApp allows this for about 2 days after sending. Votes already received are kept. Reactions on the poll (such as the bridge's 👍) disappear with it (tested 2026-11-18): if the person should keep a record of their answer, send it as a separate message (`confirmText`). Response: `{ "deleted": true, "deletedAt": "..." }`. Deleting an already deleted poll does nothing and returns the same.
+Delete the poll for everyone in the chat. `:id` may also be a queued poll's `scheduledMessageId`: if it hasn't gone out yet it is cancelled instead (`{ "deleted": false, "cancelled": true }`). WhatsApp allows this for about 2 days after sending. Votes already received are kept. Reactions on the poll (such as the bridge's 👍) disappear with it (tested 2026-11-18): if the person should keep a record of their answer, send it as a separate message (`confirmText`). Response: `{ "deleted": true, "deletedAt": "..." }`. Deleting an already deleted poll does nothing and returns the same.
 
 ### GET /api/groups/:id/participants
 

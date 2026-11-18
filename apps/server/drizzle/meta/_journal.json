@@ -71,6 +71,13 @@
       "when": 1795000000000,
       "tag": "0009_poll_stealth",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1795001000000,
+      "tag": "0010_poll_lifecycle",
+      "breakpoints": true
     }
   ]
 }

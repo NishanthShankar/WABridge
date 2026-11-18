@@ -229,8 +229,23 @@ export const polls = sqliteTable(
     stealth: integer('stealth', { mode: 'boolean' }).notNull().default(false),
     createdAt: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
     deletedAt: integer('deleted_at', { mode: 'timestamp_ms' }),
+    /** The client's own id for this poll, echoed in poll.vote */
+    ref: text('ref'),
+    /** When someone last cast a counted vote (never what they picked) */
+    votedAt: integer('voted_at', { mode: 'timestamp_ms' }),
+    /** When the bridge should delete it next: the client's deleteAt, or a retry */
+    deleteAt: integer('delete_at', { mode: 'timestamp_ms' }),
+    /** expired (deleteAt, only if nobody voted) | voted (deleteAfterVote retry) */
+    deleteReason: text('delete_reason'),
+    deleteAttempts: integer('delete_attempts').notNull().default(0),
+    /** Set when the bridge gave up deleting it */
+    deleteFailedAt: integer('delete_failed_at', { mode: 'timestamp_ms' }),
   },
-  (table) => [index('polls_chat_idx').on(table.chatJid)],
+  (table) => [
+    index('polls_chat_idx').on(table.chatJid),
+    index('polls_ref_idx').on(table.ref),
+    index('polls_delete_at_idx').on(table.deleteAt),
+  ],
 );
 
 /** Every vote received on a poll in `polls`, including changes and ignored ones. */
@@ -248,6 +263,7 @@ export const pollVotes = sqliteTable(
     /**
      * null = counts and is final. settling (multi-choice, still tapping) | locked | poll_deleted | empty | superseded
      * hidden = a stealth poll's vote: only that they voted is kept (selected is []), so a lock can hold.
+     * awaiting_ack = the same, for stealth deleteAfterVote until the client acknowledges the vote.
      */
     note: text('note'),
     at: integer('at', { mode: 'timestamp_ms' }).notNull(),
