@@ -16,6 +16,8 @@ X-API-Key: sk_your_key_here
 curl -H "X-API-Key: sk_..." https://<tenant>.wabridge.co.in/api/docs
 ```
 
+**Private requests:** add the header `X-Private: true` to any request (or `"private": true` in its JSON body) and the server stores nothing about what it sends: no message, no contact, no log of the text or number. The results (delivery status, poll votes, answers) are then only sent to your webhooks, your callbacks, and are not kept on the server. Read [Private requests](#private-requests) (`GET /api/docs?section=private-requests`) before relying on it.
+
 Only some sections: `GET /api/docs?section=polls,reply-lane` (comma-separated ids; the base URL and auth intro are always included). The ids come from the `##` headings: `GET /api/docs/sections` lists them as `{ "sections": [{ "id", "title", "source", "bytes" }] }`, where `source` is `core` or the extension's package name. An unknown id answers `404 unknown_section` with the list of valid ids.
 
 ---
@@ -441,6 +443,7 @@ Schedule a message or send immediately. Supports both individual contacts and gr
 | `name` | string | No | Contact name (used with `phone`) |
 | `content` | string | Yes | Message text (min 1 char) |
 | `scheduledAt` | string | No | ISO datetime. Omit to send immediately. |
+| `private` | boolean | No | Store nothing about this message; its outcome comes only as `message.status` webhooks. Same as the header `X-Private: true`. See [Private requests](#private-requests). |
 | `mediaUrl` | string (URL) | No | URL to media file |
 | `mediaType` | string | If mediaUrl set | `image`, `video`, `audio`, `document`, `sticker` (a WebP image), `videoNote` (a short square MP4, shown as a round video), `voiceNote` (audio shown as a voice message) or `gif` (a short MP4 that loops silently) |
 | `location` | object | No | A map pin instead of text: `{latitude, longitude, name?, address?}` |
@@ -936,6 +939,8 @@ All errors return:
 
 ## Webhooks
 
+To keep a send and its callbacks off the server's disk, see [Private requests](#private-requests): the switch is on the request you send, not on the webhook.
+
 Register webhook URLs to get notified when a message is received from a specific phone number. Supports text messages, media (images, documents, audio, stickers), and shared locations.
 
 ### POST /api/webhooks
@@ -1165,6 +1170,7 @@ Answer a chat that wrote to this account in the last 24 hours, with text, media 
 | `reaction` | `{messageId, emoji, fromMe?, participant?}` | React to a message. `emoji: ""` removes the reaction. |
 | `poll` | object | Send a poll. Sent on its own, without `text` or `mediaUrl`. See [Polls](#polls). |
 | `typing` | boolean | Show "typing…" briefly before the text. Default `true`. |
+| `private` | boolean | Store nothing about what this sends (a poll or event is kept in memory only; votes and answers come only by webhook). Same as the header `X-Private: true`. See [Private requests](#private-requests). |
 | `dontSkip` | boolean | ⚠️ Outside the 24 hour window, queue this instead of answering `409`. **Read [Outside the window](#outside-the-window-dontskip-and-forcepoll) first.** |
 | `forcePoll` | boolean | ⚠️ Outside the window, send `poll` as a real poll (queued). **Read [Outside the window](#outside-the-window-dontskip-and-forcepoll) first.** |
 
@@ -1308,7 +1314,14 @@ Sent to catch-all webhooks with `allEvents`.
 
 ## Private requests
 
-Mark any request private and nothing it sends is stored on the server. You choose this per request; there is no server setting. `GET /api/health` lists `"private"` under `features` on servers with this.
+Mark any request private and nothing it sends is stored on the server. Its results reach you only through your webhooks (your callbacks) and are not kept either. You choose this per request; there is no server setting.
+
+**To make a send and its callbacks private, do two things:**
+
+1. Send the request with `X-Private: true` (or `"private": true` in the body). This is the only switch. There is nothing to set on the webhook: a callback is private because the request that caused it was.
+2. Have a catch-all webhook with `allEvents: true` registered (`POST /api/webhooks`, sent **without** `private`, once). Private results are delivered only there. Without one they are not delivered at all and cannot be fetched later.
+
+Check it worked: the response has the header `X-Private: true`, and each callback has `"private": true`. `GET /api/health` lists `"private"` under `features` on servers with this.
 
 Either send the header on any request:
 
