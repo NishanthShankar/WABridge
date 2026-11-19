@@ -1306,6 +1306,60 @@ Sent to catch-all webhooks with `allEvents`.
 
 `message.read` fires once per message and reader for messages this account sent: in 1:1 chats when they open it, in groups for each member who reads it. `status` is `played` for a voice note they listened to.
 
+## Private requests
+
+Mark any request private and nothing it sends is stored on the server. You choose this per request; there is no server setting. `GET /api/health` lists `"private"` under `features` on servers with this.
+
+Either send the header on any request:
+
+```
+X-Private: true
+```
+
+or put `"private": true` at the top level of a JSON body:
+
+```json
+{ "phone": "919812345678", "content": "Your report is ready", "private": true }
+```
+
+The response carries `X-Private: true` when the request was handled privately.
+
+**What it means**
+
+- **Nothing is written to disk.** No message row, no contact created from the phone number, no poll or event record. The server enforces this in the database itself: a private request runs on a connection that cannot write to the database file.
+- **What it needs to work is held in memory only**, and is gone when the server restarts. A queued message's text is erased from memory as soon as it is sent.
+- **Results come to you by webhook**, to catch-all webhooks with `allEvents: true`. Each carries `"private": true`. Keep what you need: the server will not have it later.
+- **Private data is only visible to private requests.** `GET /api/messages/:id`, `GET /api/polls/:id` and the other read routes show a private item only when the GET itself is private, and only until it is dropped or the server restarts.
+- Message text and phone numbers of private requests are not written to the logs.
+
+**Per API**
+
+| API | Private behaviour |
+| --- | --- |
+| `POST /api/messages`, `/bulk` | Queued in memory, sent with the usual delay, counted toward the daily cap. Outcome arrives as `message.status`. Status is kept (without the text) for 24 hours, then dropped. |
+| `POST /api/reply` | Text and media were never stored. A `poll` or `event` is kept in memory, so its votes and answers can still be read and reported. `dontSkip` / `forcePoll` queue privately. |
+| Polls | Votes are kept in memory and sent as `poll.vote`. Add `stealth` if the answers must not be kept even in memory. |
+| `POST /api/messages/edit`, `/delete`, `/forward`, `/pin`, `/star` | Work on private messages by `scheduledMessageId`, and on any message by `messageId`. |
+| `POST /api/status` | Nothing was stored before either; `allContacts` still reads your saved contacts. |
+| Extensions | Follow the same rule. See each extension's section. |
+| Anything that must store data (webhooks, templates, recurring rules, groups sync, channels create) | `409 not_available_private`. Send it without `private`. |
+
+**Restart.** A private message that is still queued when the server restarts is **not sent**, and no webhook can tell you, because nothing was kept. For a message that must go out, either send it without `scheduledAt` and wait for `message.status`, or do not make it private. A private poll or event sent before a restart can no longer be read afterwards.
+
+**Errors:** `409 not_available_private` (above), `501 private_unavailable` (this server cannot run private requests).
+
+### Webhook: `message.status`
+
+Sent for private queued messages only, when one is sent, delivered, or has failed:
+
+```json
+{ "event": "message.status", "eventId": "…", "timestamp": "…", "private": true,
+  "scheduledMessageId": "0b0e…", "messageId": "3EB0…", "status": "sent", "reason": null,
+  "chatId": "919812345678@s.whatsapp.net", "phone": "919812345678", "isGroup": false }
+```
+
+`status` is `sent`, `delivered` or `failed` (`reason` says why). `messageId` is the WhatsApp id, `null` until sent. `delivered` is best effort, as for stored messages. Read receipts arrive as `message.read`, as for any message.
+
 ## Polls
 
 Send a poll with `POST /api/reply` (so the 24 hour window applies; to reach a chat outside it, see `forcePoll` under [Outside the window](#outside-the-window-dontskip-and-forcepoll), and use it carefully). Votes come back decrypted as `poll.vote` webhooks, and the bridge can respond to each vote by itself. `GET /api/health` lists `"poll-votes"` under `features` on servers with this.
@@ -1395,6 +1449,23 @@ Sent to the same webhooks as the poll's votes when the bridge deletes a poll **l
 `poll.delete_failed` has the same fields plus `error`, and means the poll is still on their phone. `GET /api/polls/:id` shows it as `deleteFailedAt`.
 
 Only polls sent after this feature was deployed can be read: a vote is encrypted with a secret the bridge keeps when it sends the poll.
+
+### Changing number
+
+A poll belongs to the number that sent it, and the bridge records that number on the poll. If that number is later unlinked, votes on its polls are still read when they reach another number of yours:
+
+- **The same account, re-paired with a new number.** Votes on the old number's polls are read as before.
+- **Another user of the same multiuser tenant.** A vote that arrives on a sibling's number for a poll its sender can no longer hear is taken by the sibling. The vote is stored with the poll, on the account that sent it: `poll.vote` goes to **that** account's webhooks, and `GET /api/polls/:id` and `/api/polls/pending` are answered with **that** account's key. Keep the old user enabled; a disabled or purged user's polls are out of reach.
+
+While the sending number is linked, even if offline, its votes are left to it, so nothing is handled twice.
+
+`poll.vote` carries `receivedBy` (the phone number that took the vote) when that is not the number that sent the poll. Reactions and `confirmText` are then sent by that number.
+
+Limits, which come from WhatsApp:
+
+- **Groups only.** A vote in a 1:1 chat is sent only to the number that sent the poll. Once that number is unlinked, those votes reach nobody.
+- **Deleting needs an admin.** Another number can delete the poll for everyone only in a group where it is an admin. Otherwise `deleteAfterVote` and `deleteAt` end in `poll.delete_failed` at once (no retries), and `DELETE /api/polls/:id` answers `502`.
+- Polls sent before this was recorded are stamped with the number linked at the first connection after the upgrade.
 
 ### Stealth polls
 

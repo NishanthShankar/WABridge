@@ -14,13 +14,21 @@ import type {
 import type { Logger } from 'pino';
 import { setupChatStateListener } from '../chats/chat-state.js';
 import type { createDatabase } from '../db/client.js';
-import { handlePollVote } from '../polls/polls.js';
+import { isPrivateDb, peekPrivateDb } from '../db/private.js';
 import { handleEventResponse } from '../events/events.js';
+import { getEvent } from '../events/events.js';
 import { setupListListener } from '../lists/lists.js';
 import { setupRecentMessages } from '../messages/recent-messages.js';
 import { safeFetch } from '../net/safe-fetch.js';
+import { claimVote } from '../polls/poll-accounts.js';
 import { attachPollJobs } from '../polls/poll-jobs.js';
+import {
+  handlePollVote,
+  locatePoll,
+  sentByThisNumber,
+} from '../polls/polls.js';
 import { ackVote, holdVote } from '../polls/stealth-inbox.js';
+import { setupPrivateDelivery } from '../scheduler/private-callbacks.js';
 import { recordInbound } from './chat-activity.js';
 import { type GroupCache, createGroupCache } from './group-cache.js';
 import { isGroupJid, jidToPhone, ownJids } from './jid.js';
@@ -70,6 +78,8 @@ export function setupWebhookListener(
   setupListListener(sock, db, logger);
   // Recent messages in memory, for POST /api/messages/forward and the edit/delete time checks
   setupRecentMessages(sock);
+  // Delivery receipts of messages sent by private requests: message.status webhooks
+  setupPrivateDelivery(sock, db, logger);
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     // Only handle real-time messages, not history sync
@@ -210,8 +220,26 @@ async function handleMessage(
 
   // ── Poll votes: decrypt, record, respond, then tell the same webhooks as messages ──
   if (content.pollUpdateMessage) {
+    // The poll may live with another number of the same tenant (see locatePoll). Its votes,
+    // webhooks and held stealth votes stay with the account that sent it.
+    const pollId = content.pollUpdateMessage.pollCreationMessageKey?.id;
+    const home = pollId ? locatePoll(db, sock, pollId) : null;
+    if (!home) return;
+    if (key.id && !claimVote(home.db, key.id)) return;
+    const homeService =
+      home.db === db ? service : createWebhooksService(home.db);
     const hooksFor = (): Webhook[] =>
-      isGroup ? service.getAllEvents() : service.getByPhone(senderPhone);
+      isGroup
+        ? homeService.getAllEvents()
+        : homeService.getByPhone(senderPhone);
+    // Set when the number that took the vote is not the one that sent the poll, and when the
+    // poll was sent by a private request (it and its votes are in memory only)
+    const receivedBy = {
+      ...(!sentByThisNumber(sock, home.poll) && sock.user?.id
+        ? { receivedBy: jidToPhone(sock.user.id) }
+        : {}),
+      ...(isPrivateDb(home.db) ? { private: true } : {}),
+    };
     // A stealth poll's vote lives only in memory until a webhook takes it (2xx) or the client
     // acknowledges it through /api/polls/pending.
     const deliverVote = (payload: Record<string | symbol, unknown>) => {
@@ -219,14 +247,17 @@ async function handleMessage(
         for (const hook of hooksFor()) fireWebhook(hook, payload, logger);
         return;
       }
-      const held = holdVote(db, payload);
+      const held = holdVote(home.db, payload);
       const voteId = held.voteId as string;
       for (const hook of hooksFor())
-        fireWebhook(hook, held, logger, undefined, () => ackVote(db, voteId));
+        fireWebhook(hook, held, logger, undefined, () =>
+          ackVote(home.db, voteId),
+        );
     };
     const vote = await handlePollVote({
       sock,
-      db,
+      db: home.db,
+      via: db,
       logger,
       update: content.pollUpdateMessage,
       voterJid: authorJid,
@@ -238,19 +269,24 @@ async function handleMessage(
           ...base,
           timestamp: new Date().toISOString(),
           ...settled,
+          ...receivedBy,
           messageId: key.id,
         }),
     });
     if (!vote) return;
-    deliverVote({ ...base, ...vote, messageId: key.id });
+    deliverVote({ ...base, ...vote, ...receivedBy, messageId: key.id });
     return;
   }
 
   // ── Answers to an event card (Going / Maybe / Can't go): same webhooks as messages ──
   if (content.encEventResponseMessage) {
+    // An event card sent by a private request lives in the private database (memory)
+    const eventId = content.encEventResponseMessage.eventCreationMessageKey?.id;
+    const priv = peekPrivateDb(db);
+    const inPrivate = !!priv && !!eventId && !!getEvent(priv, eventId);
     const answer = handleEventResponse({
       sock,
-      db,
+      db: inPrivate && priv ? priv : db,
       logger,
       enc: content.encEventResponseMessage,
       responderJid: authorJid,
@@ -262,7 +298,16 @@ async function handleMessage(
       ? service.getAllEvents()
       : service.getByPhone(senderPhone);
     for (const hook of hooks)
-      fireWebhook(hook, { ...base, ...answer, messageId: key.id }, logger);
+      fireWebhook(
+        hook,
+        {
+          ...base,
+          ...answer,
+          ...(inPrivate ? { private: true } : {}),
+          messageId: key.id,
+        },
+        logger,
+      );
     return;
   }
 

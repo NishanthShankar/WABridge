@@ -7,16 +7,21 @@ import type { Queue } from 'bullmq';
  * @param messageId - scheduledMessages.id (SQLite record)
  * @param delay - Milliseconds until the job should fire (0 = immediate)
  * @param tenantId - Optional tenant ID (empty string in single-tenant mode)
+ * @param isPrivate - The message lives in the account's private database (memory only).
+ *                    The job carries only its id; after a restart there is nothing to send.
  */
 export async function scheduleOneTimeJob(
   queue: Queue,
   messageId: string,
   delay: number,
   tenantId: string = '',
+  isPrivate = false,
 ): Promise<void> {
   await queue.add(
     'send',
-    { scheduledMessageId: messageId, tenantId },
+    isPrivate
+      ? { scheduledMessageId: messageId, tenantId, private: true }
+      : { scheduledMessageId: messageId, tenantId },
     {
       delay: Math.max(0, delay),
       jobId: `msg-${messageId}`,
@@ -55,7 +60,8 @@ export async function rescheduleJob(
   messageId: string,
   newDelay: number,
   tenantId: string = '',
+  isPrivate = false,
 ): Promise<void> {
   await cancelJob(queue, messageId);
-  await scheduleOneTimeJob(queue, messageId, newDelay, tenantId);
+  await scheduleOneTimeJob(queue, messageId, newDelay, tenantId, isPrivate);
 }

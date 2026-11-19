@@ -11,6 +11,31 @@ import {
 import { buildMessagePayload } from './message-payload.js';
 import { sendStored } from './send-stored.js';
 import { errorMessage } from '../net/safe-fetch.js';
+import pino, { type Logger } from 'pino';
+import { privateContext } from '../db/private.js';
+import {
+  notifyMessageStatus,
+  scrubSent,
+  sweepPrivateMessages,
+} from './private-callbacks.js';
+
+/**
+ * The context a job runs in. A job queued by a private request carries private: true and
+ * runs against the account's private database: after a restart that database is empty, so
+ * the job finds no message and does nothing.
+ */
+export function contextFor(
+  resolveContext: (jobData: Record<string, unknown>) => AppContext | null,
+  jobData: Record<string, unknown>,
+): AppContext | null {
+  const ctx = resolveContext(jobData);
+  if (!ctx || !jobData.private) return ctx;
+  try {
+    return privateContext(ctx);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Create the BullMQ worker that processes message send jobs.
@@ -33,6 +58,7 @@ import { errorMessage } from '../net/safe-fetch.js';
 export function createMessageWorker(
   config: AppConfig,
   resolveContext: (jobData: Record<string, unknown>) => AppContext | null,
+  logger: Logger = pino({ level: 'silent' }),
 ): Worker {
   // Build worker connection directly -- must have maxRetriesPerRequest: null
   const connection = {
@@ -46,12 +72,16 @@ export function createMessageWorker(
     'message-send',
     async (job) => {
       if (job.name === 'send') {
-        const ctx = resolveContext(job.data as Record<string, unknown>);
+        const ctx = contextFor(
+          resolveContext,
+          job.data as Record<string, unknown>,
+        );
         if (!ctx) return; // Context not found (e.g., tenant deleted)
         await processSendJob(
           ctx,
           config,
           job.data.scheduledMessageId as string,
+          logger,
         );
       } else if (job.name === 'recurring-send') {
         const ctx = resolveContext(job.data as Record<string, unknown>);
@@ -85,12 +115,12 @@ export function createMessageWorker(
     const messageId = job.data?.scheduledMessageId as string | undefined;
     if (!messageId) return;
 
-    const ctx = resolveContext(job.data as Record<string, unknown>);
+    const ctx = contextFor(resolveContext, job.data as Record<string, unknown>);
     if (!ctx) return;
 
     try {
       const now = new Date();
-      ctx.db
+      const failed = ctx.db
         .update(scheduledMessages)
         .set({
           status: 'failed',
@@ -100,7 +130,13 @@ export function createMessageWorker(
           updatedAt: now,
         })
         .where(eq(scheduledMessages.id, messageId))
-        .run();
+        .returning()
+        .get();
+      if (ctx.private && failed)
+        notifyMessageStatus(ctx.db, logger, failed, {
+          status: 'failed',
+          reason: errorMessage(error),
+        });
 
       ctx.broadcast({
         type: 'message:failed',
@@ -122,10 +158,11 @@ export function createMessageWorker(
 /**
  * Process a 'send' job: read message from SQLite, send via Baileys, update status.
  */
-async function processSendJob(
+export async function processSendJob(
   ctx: AppContext,
   config: AppConfig,
   scheduledMessageId: string,
+  logger: Logger,
 ): Promise<void> {
   const { db, broadcast, rateLimiter, getSocket } = ctx;
 
@@ -143,7 +180,8 @@ async function processSendJob(
   const { allowed, sentToday, dailyCap } = rateLimiter.canSend();
   if (!allowed) {
     const now = new Date();
-    db.update(scheduledMessages)
+    const capped = db
+      .update(scheduledMessages)
       .set({
         status: 'failed',
         failedAt: now,
@@ -151,7 +189,13 @@ async function processSendJob(
         updatedAt: now,
       })
       .where(eq(scheduledMessages.id, msg.id))
-      .run();
+      .returning()
+      .get();
+    if (ctx.private && capped)
+      notifyMessageStatus(db, logger, capped, {
+        status: 'failed',
+        reason: capped.failureReason ?? undefined,
+      });
 
     broadcast({
       type: 'message:failed',
@@ -197,7 +241,8 @@ async function processSendJob(
 
   // Update SQLite with success
   const now = new Date();
-  db.update(scheduledMessages)
+  const sentRow = db
+    .update(scheduledMessages)
     .set({
       status: 'sent',
       whatsappMessageId: sentId,
@@ -206,7 +251,14 @@ async function processSendJob(
       updatedAt: now,
     })
     .where(eq(scheduledMessages.id, msg.id))
-    .run();
+    .returning()
+    .get();
+  if (ctx.private && sentRow) {
+    // It is out: forget what it said, tell the client, and drop what is a day old
+    scrubSent(db, msg.id);
+    notifyMessageStatus(db, logger, sentRow, { status: 'sent' });
+    sweepPrivateMessages(db);
+  }
 
   broadcast({
     type: 'message:sent',

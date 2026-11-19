@@ -24,6 +24,11 @@ export interface AppContext {
   getSocket: () => WASocket | null;
   getHealth: () => ConnectionHealth;
   tenantId: string; // empty string in single-tenant
+  /**
+   * Set on a request the client marked private: db is then the account's private database
+   * (memory only, cannot write to disk; see db/private.ts) and broadcast does nothing.
+   */
+  private?: boolean;
 }
 
 /**

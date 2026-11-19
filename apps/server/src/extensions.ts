@@ -3,6 +3,7 @@ import type { Hono } from 'hono';
 import type { Logger } from 'pino';
 import type { AppConfig } from './config/schema.js';
 import type { createDatabase } from './db/client.js';
+import { registerPrivateTables } from './db/private.js';
 
 type Database = ReturnType<typeof createDatabase>;
 type WASocket = ReturnType<typeof makeWASocket>;
@@ -41,6 +42,12 @@ export interface Extension {
    */
   onConnected?: (sock: WASocket, ctx: ExtensionConnectionContext) => void;
   /**
+   * Tables of this extension that hold what its sending routes store. A private request
+   * (see db/private.ts) gets an in-memory copy of each, so the routes work without writing to
+   * disk. Tables not listed are read from disk and cannot be written by a private request.
+   */
+  privateTables?: string[];
+  /**
    * Markdown documenting the extension's routes and webhooks. Appended to GET /api/docs
    * under "# Extension: <name>". A function is called on every request.
    */
@@ -71,6 +78,7 @@ export async function loadExtensions(
         logger: logger.child({ extension: name }),
       });
       loaded.push(ext);
+      if (ext.privateTables) registerPrivateTables(ext.privateTables);
       logger.info(
         {
           extension: name,

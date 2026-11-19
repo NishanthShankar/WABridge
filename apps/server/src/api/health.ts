@@ -19,6 +19,7 @@ export const FEATURES = [
   'reply-window', // replyWindow on /api/reply, GET /api/reply/window, GET /api/chats/:id
   'chat-presence', // presence.update + message.read webhooks, GET /api/chats/:id/presence
   'reply-dont-skip', // dontSkip / forcePoll on POST /api/reply
+  'private', // X-Private: true or "private": true on any request: nothing it sends is stored; message.status webhooks
   'poll-stealth', // poll.stealth: answers held in memory until acknowledged, never stored
   'poll-lifecycle', // poll ref, deleteAt, delete retries, poll.deleted / poll.delete_failed, lookup by scheduledMessageId
   'chat-lists', // GET/POST/PATCH/DELETE /api/lists, POST /api/lists/:id/chats, list.updated webhooks

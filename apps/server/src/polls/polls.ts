@@ -4,8 +4,10 @@ import { decryptPollVote, type proto } from '@whiskeysockets/baileys';
 import { and, desc, eq } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { createDatabase } from '../db/client.js';
+import { diskDbOf, peekPrivateDb } from '../db/private.js';
 import { pollVotes, polls } from '../db/schema.js';
-import { jidToPhone, ownJids } from '../webhooks/jid.js';
+import { isGroupJid, jidToPhone, ownJids } from '../webhooks/jid.js';
+import { siblingsOf } from './poll-accounts.js';
 import { currentSock, deleteReliably, notifyPoll } from './poll-jobs.js';
 import { AFTER_ACK } from './stealth-inbox.js';
 
@@ -98,6 +100,7 @@ export async function sendPoll(
       react: b.react,
       confirmText: b.confirmText,
       secret: secret.toString('base64'),
+      senderJids: JSON.stringify([...ownJids(sock)]),
       stealth: !!input.stealth,
       ref: input.ref ?? null,
       deleteAt,
@@ -135,9 +138,103 @@ function normalise(jid: string | null | undefined): string | null {
   return `${user.split(':')[0]}@${server}`;
 }
 
+/** The JIDs of the number that sent this poll, or null if that was never recorded. */
+export function pollSenders(
+  poll: Pick<PollRow, 'senderJids'>,
+): string[] | null {
+  if (!poll.senderJids) return null;
+  const jids = JSON.parse(poll.senderJids) as string[];
+  return jids.length ? jids : null;
+}
+
+function isLinkedAs(sock: WASocket | null, senders: string[]): boolean {
+  if (!sock) return false;
+  const own = ownJids(sock);
+  return senders.some((j) => own.has(j));
+}
+
 /**
- * Decrypt a vote. The voter's phone signs it with the JIDs it used for us and for itself,
- * which may be phone JIDs or LIDs, so every pairing is tried until one authenticates.
+ * True when the number on this socket is the one that sent the poll. A poll with no recorded
+ * sender is taken to be this account's own.
+ */
+export function sentByThisNumber(
+  sock: WASocket,
+  poll: Pick<PollRow, 'senderJids'>,
+): boolean {
+  const senders = pollSenders(poll);
+  return !senders || isLinkedAs(sock, senders);
+}
+
+/** Thrown when this number can neither act as the poll's sender nor as a group admin. */
+export class PollNotOursError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PollNotOursError';
+  }
+}
+
+/**
+ * The message key of the poll as this socket must address it: its own message when this
+ * number sent it, otherwise a message by the sender (groups only; LID form when known).
+ */
+function pollKeyFor(sock: WASocket, poll: PollRow) {
+  if (sentByThisNumber(sock, poll))
+    return { remoteJid: poll.chatJid, id: poll.id, fromMe: true };
+  const senders = pollSenders(poll) ?? [];
+  const participant = senders.find((j) => j.endsWith('@lid')) ?? senders[0];
+  return {
+    remoteJid: poll.chatJid,
+    id: poll.id,
+    fromMe: false,
+    participant,
+  };
+}
+
+/**
+ * Find a poll for a vote that arrived on this socket, and the database it lives in.
+ *
+ * The poll is normally in this account's own database. It can also be in a sibling's (another
+ * number of the same tenant): then this number handles the vote only if the sending number is
+ * no longer linked anywhere in the tenant. While it is linked, even if offline right now, the
+ * vote is left to it, so it is never handled twice.
+ */
+export function locatePoll(
+  db: Database,
+  sock: WASocket,
+  pollId: string,
+): { db: Database; poll: PollRow } | null {
+  const siblings = siblingsOf(db);
+  const own = getPoll(db, pollId);
+  let home = own ? { db, poll: own } : null;
+  if (!home) {
+    // A poll sent by a private request lives in this account's private database (memory)
+    const priv = peekPrivateDb(db);
+    const poll = priv ? getPoll(priv, pollId) : undefined;
+    if (priv && poll) home = { db: priv, poll };
+  }
+  if (!home) {
+    for (const s of siblings) {
+      const poll = getPoll(s.db, pollId);
+      if (poll) {
+        home = { db: s.db, poll };
+        break;
+      }
+    }
+  }
+  if (!home) return null;
+  const senders = pollSenders(home.poll);
+  // Sender unknown: only the account that holds the poll can try (as itself)
+  if (!senders) return diskDbOf(home.db) === db ? home : null;
+  if (isLinkedAs(sock, senders)) return home;
+  if (siblings.some((s) => isLinkedAs(s.getSocket(), senders))) return null;
+  return home;
+}
+
+/**
+ * Decrypt a vote. The voter's phone signs it with the JIDs it used for the poll's sender and
+ * for itself, which may be phone JIDs or LIDs, so every pairing is tried until one
+ * authenticates. The sender is the number recorded on the poll, which need not be the number
+ * on this socket.
  */
 export function decryptVote(
   sock: WASocket,
@@ -147,7 +244,7 @@ export function decryptVote(
 ): string[] | null {
   const vote = update.vote;
   if (!vote?.encPayload || !vote.encIv) return null;
-  const creators = [...ownJids(sock)];
+  const creators = pollSenders(poll) ?? [...ownJids(sock)];
   const voters = [
     ...new Set(voterJids.map(normalise).filter((j): j is string => !!j)),
   ];
@@ -222,15 +319,42 @@ export function fillConfirm(
     .replaceAll('{{poll}}', poll.name);
 }
 
-/** Delete a poll for everyone in the chat and mark it deleted. */
+/** Whether the number on this socket is an admin of the group. */
+async function isGroupAdmin(
+  sock: WASocket,
+  groupJid: string,
+): Promise<boolean> {
+  const own = ownJids(sock);
+  const meta = await sock.groupMetadata(groupJid);
+  return meta.participants.some((p) => {
+    if (!p.admin) return false;
+    const ids = [p.id, p.lid, p.phoneNumber];
+    return ids.some((j) => !!j && own.has(normalise(j) as string));
+  });
+}
+
+/**
+ * Delete a poll for everyone in the chat and mark it deleted. A poll another number sent
+ * (this account changed number, or a sibling sent it) can only be deleted in a group where
+ * this number is an admin; otherwise PollNotOursError.
+ */
 export async function deletePoll(
   sock: WASocket,
   db: Database,
   poll: PollRow,
 ): Promise<void> {
-  await sock.sendMessage(poll.chatJid, {
-    delete: { remoteJid: poll.chatJid, id: poll.id, fromMe: true },
-  });
+  if (!sentByThisNumber(sock, poll)) {
+    if (!isGroupJid(poll.chatJid))
+      throw new PollNotOursError(
+        'The number that sent this poll is no longer linked, and only it can delete the poll in a 1:1 chat',
+      );
+    const admin = await isGroupAdmin(sock, poll.chatJid).catch(() => false);
+    if (!admin)
+      throw new PollNotOursError(
+        'The number that sent this poll is no longer linked, and the number linked now is not an admin of the group',
+      );
+  }
+  await sock.sendMessage(poll.chatJid, { delete: pollKeyFor(sock, poll) });
   db.update(polls)
     .set({ deletedAt: new Date(), deleteAt: null })
     .where(eq(polls.id, poll.id))
@@ -339,7 +463,7 @@ async function acknowledgeInChat(
   poll: PollRow,
   selected: string[],
 ): Promise<void> {
-  const pollKey = { remoteJid: poll.chatJid, id: poll.id, fromMe: true };
+  const pollKey = pollKeyFor(sock, poll);
   try {
     if (poll.react) {
       await sock.sendMessage(poll.chatJid, {
@@ -435,6 +559,7 @@ async function finalVote(
   voterPhone: string | null,
   selected: string[],
   settlingRowId: number | null,
+  via: Database = db,
 ): Promise<Record<string | symbol, unknown>> {
   if (selected.length) markVoted(db, poll.id);
   const verdict = { counted: true, note: null };
@@ -483,7 +608,8 @@ async function finalVote(
         .run();
       const fresh = getPoll(db, poll.id);
       if (!fresh || fresh.deletedAt) return;
-      const live = currentSock(db) ?? sock;
+      // The newest socket of the account the vote arrived on
+      const live = currentSock(via) ?? sock;
       await acknowledgeInChat(live, logger, fresh, selected);
       if (await deleteReliably(live, db, logger, fresh, 'voted'))
         notifyPoll(db, logger, getPoll(db, poll.id) ?? fresh, {
@@ -512,6 +638,10 @@ export function releaseVote(db: Database, pollId: string, rowId: number): void {
  * Returns null for votes on polls this bridge didn't send (or can't decrypt).
  * onSettled gets a second payload when a multi-choice vote becomes final later.
  * A payload with an AFTER_ACK entry must be held until the client acknowledges it.
+ *
+ * db is where the poll lives (see locatePoll); sock is the number the vote arrived on, which
+ * answers in the chat. They differ when a sibling number takes a vote for a number that is no
+ * longer linked: then pass that sibling's own database as via.
  */
 export async function handlePollVote(params: {
   sock: WASocket;
@@ -523,9 +653,11 @@ export async function handlePollVote(params: {
   voterPhone: string | null;
   onSettled?: (payload: Record<string | symbol, unknown>) => void;
   settleMs?: number;
+  via?: Database;
 }): Promise<Record<string | symbol, unknown> | null> {
   const { sock, db, logger, update, voterJid, voterAltJid, voterPhone } =
     params;
+  const via = params.via ?? db;
   const pollId = update.pollCreationMessageKey?.id;
   if (!pollId) return null;
   const poll = getPoll(db, pollId);
@@ -574,6 +706,7 @@ export async function handlePollVote(params: {
                 voterPhone,
                 selected,
                 row?.id ?? null,
+                via,
               ),
             );
           })().catch((err) =>
@@ -597,7 +730,17 @@ export async function handlePollVote(params: {
   }
 
   if (verdict.counted && !verdict.note)
-    return finalVote(sock, db, logger, poll, voter, voterPhone, selected, null);
+    return finalVote(
+      sock,
+      db,
+      logger,
+      poll,
+      voter,
+      voterPhone,
+      selected,
+      null,
+      via,
+    );
 
   if (!poll.stealth) {
     db.insert(pollVotes)

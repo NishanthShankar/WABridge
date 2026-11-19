@@ -3,6 +3,7 @@ import type { WAMessageKey } from '@whiskeysockets/baileys';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getContext } from '../context.js';
+import { diskDbOf } from '../db/private.js';
 import { contacts } from '../db/schema.js';
 import { toJid } from '../webhooks/jid.js';
 
@@ -78,7 +79,8 @@ export function createStatusRouter() {
     const input = c.req.valid('json');
 
     const raw = input.allContacts
-      ? db
+      ? // The saved contacts, also for a private request (whose own contacts table is empty)
+        diskDbOf(db)
           .select({ phone: contacts.phone })
           .from(contacts)
           .all()

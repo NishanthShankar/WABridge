@@ -88,6 +88,7 @@ async function main(): Promise<void> {
   const messageWorker = createMessageWorker(
     config,
     (jobData) => plugin.resolveJobContext(jobData),
+    logger.child({ module: 'worker' }),
   );
   logger.info('BullMQ message worker started');
 

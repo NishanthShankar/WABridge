@@ -2,11 +2,18 @@ import type makeWASocket from '@whiskeysockets/baileys';
 import { and, eq, isNull, lte } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { createDatabase } from '../db/client.js';
+import { onPrivateDb, peekPrivateDb } from '../db/private.js';
 import { pollVotes, polls } from '../db/schema.js';
-import { isGroupJid, jidToPhone } from '../webhooks/jid.js';
+import { isGroupJid, jidToPhone, ownJids } from '../webhooks/jid.js';
 import { fireWebhook } from '../webhooks/webhook.listener.js';
 import { createWebhooksService } from '../webhooks/webhooks.service.js';
-import { deletePoll, getPoll } from './polls.js';
+import { siblingsOf } from './poll-accounts.js';
+import {
+  PollNotOursError,
+  deletePoll,
+  getPoll,
+  sentByThisNumber,
+} from './polls.js';
 
 type Database = ReturnType<typeof createDatabase>;
 type WASocket = ReturnType<typeof makeWASocket>;
@@ -39,6 +46,10 @@ export function attachPollJobs(
   db: Database,
   logger: Logger,
 ): void {
+  stampSender(sock, db);
+  // Polls sent by private requests are swept too, from the account's private database
+  const priv = peekPrivateDb(db);
+  if (priv) attachPollJobs(sock, priv, logger);
   const known = tenants.get(db);
   if (known) {
     known.sock = sock;
@@ -56,6 +67,26 @@ export function attachPollJobs(
   }, SWEEP_MS);
   timer.unref?.();
 }
+
+/**
+ * Polls sent before the sender was recorded get the number linked now. Runs on every
+ * connection, so in practice on the first one after the upgrade, while that is still the
+ * number that sent them.
+ */
+function stampSender(sock: WASocket, db: Database): void {
+  const own = [...ownJids(sock)];
+  if (!own.length) return;
+  db.update(polls)
+    .set({ senderJids: JSON.stringify(own) })
+    .where(isNull(polls.senderJids))
+    .run();
+}
+
+// A private database created after the account connected joins the sweep straight away
+onPrivateDb((disk, priv) => {
+  const account = tenants.get(disk);
+  if (account) attachPollJobs(account.sock, priv, account.logger);
+});
 
 export function currentSock(db: object): WASocket | null {
   return tenants.get(db)?.sock ?? null;
@@ -120,7 +151,8 @@ function retryLater(
   err: Error,
 ): void {
   const attempts = poll.deleteAttempts + 1;
-  if (attempts > DELETE_RETRY_MS.length) {
+  // A poll this number cannot delete stays that way: no point retrying
+  if (err instanceof PollNotOursError || attempts > DELETE_RETRY_MS.length) {
     db.update(polls)
       .set({
         deleteAt: null,
@@ -170,6 +202,24 @@ export async function deleteReliably(
 }
 
 /**
+ * Which socket should delete this poll: the sending number's while it is still linked here or
+ * on a sibling, otherwise any connected number of the tenant (that one can only delete as a
+ * group admin; deletePoll checks). null = wait: the one that should do it is offline.
+ */
+function sockToDelete(
+  db: Database,
+  own: WASocket,
+  poll: PollRow,
+): WASocket | null {
+  const candidates = [own, ...siblingsOf(db).map((s) => s.getSocket())].filter(
+    (s): s is WASocket => !!s,
+  );
+  const sender = candidates.find((s) => sentByThisNumber(s, poll));
+  if (sender) return isOpen(sender) ? sender : null;
+  return candidates.find((s) => !!s.user && isOpen(s)) ?? null;
+}
+
+/**
  * Delete what is due: polls past their deleteAt that nobody voted on, and failed deletes
  * whose retry time has come. Each success is reported as poll.deleted.
  */
@@ -199,10 +249,11 @@ export async function sweepPolls(
         .run();
       continue;
     }
-    if (!isOpen(tenant.sock)) return; // wait for the connection; not counted as a failure
     const reason = poll.deleteReason === 'expired' ? 'expired' : 'voted';
+    const sock = sockToDelete(db, tenant.sock, poll);
+    if (!sock) continue; // wait for the connection; not counted as a failure
     try {
-      await deletePoll(tenant.sock, db, poll);
+      await deletePoll(sock, db, poll);
       notifyPoll(db, tenant.logger, getPoll(db, poll.id) ?? poll, {
         event: 'poll.deleted',
         reason,

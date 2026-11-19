@@ -8,6 +8,7 @@ import type { Queue } from 'bullmq';
 import type { ServerPlugin } from '../plugin.js';
 import type { Extension } from '../extensions.js';
 import { getContext } from '../context.js';
+import { privateMiddleware } from './private.js';
 import { createHealthRouter } from './health.js';
 import { renderStatusPage } from '../web/status-page.js';
 import { createContactsRouter } from '../contacts/contacts.router.js';
@@ -113,6 +114,9 @@ export function createApp(
 
   // Apply plugin middleware to all API routes (sets AppContext per request)
   app.use('/api/*', plugin.apiMiddleware);
+
+  // Private mode, chosen per request by the client (X-Private: true or "private": true)
+  app.use('/api/*', privateMiddleware());
 
   // Mount admin routes if plugin provides them (e.g., multi-tenant admin)
   if (plugin.adminRoutes) {

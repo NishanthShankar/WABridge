@@ -1,7 +1,8 @@
-import { sql } from 'drizzle-orm';
-import { scheduledMessages } from '../db/schema.js';
+import { and, gte, inArray, sql } from 'drizzle-orm';
 import type { AppConfig } from '../config/schema.js';
 import type { createDatabase } from '../db/client.js';
+import { peekPrivateDb } from '../db/private.js';
+import { scheduledMessages } from '../db/schema.js';
 
 type Database = ReturnType<typeof createDatabase>;
 
@@ -70,7 +71,7 @@ export function createRateLimiter(
 ): RateLimiter {
   const dailyCap = config.rate_limit.daily_cap;
   const warnThresholdPct = config.rate_limit.warn_threshold_pct;
-  const warnThreshold = Math.floor(dailyCap * warnThresholdPct / 100);
+  const warnThreshold = Math.floor((dailyCap * warnThresholdPct) / 100);
 
   return {
     /**
@@ -79,16 +80,23 @@ export function createRateLimiter(
      */
     getSentTodayCount(): number {
       const todayStart = getTodayIST();
-      const todayStartMs = todayStart.getTime();
-      const result = db
-        .select({ count: sql<number>`count(*)` })
-        .from(scheduledMessages)
-        .where(
-          sql`${scheduledMessages.sentAt} >= ${todayStartMs} AND ${scheduledMessages.status} IN ('sent', 'delivered')`,
-        )
-        .get();
-
-      return result?.count ?? 0;
+      // sent_at is stored in seconds. Comparing through the column (gte with a Date) converts
+      // correctly; a raw millisecond number here once made this count always 0.
+      const count = (from: Database) =>
+        from
+          .select({ count: sql<number>`count(*)` })
+          .from(scheduledMessages)
+          .where(
+            and(
+              gte(scheduledMessages.sentAt, todayStart),
+              inArray(scheduledMessages.status, ['sent', 'delivered']),
+            ),
+          )
+          .get()?.count ?? 0;
+      // Private sends are the same number's sends: they count toward the same cap. They are
+      // kept in memory, so a restart forgets today's.
+      const priv = peekPrivateDb(db);
+      return count(db) + (priv ? count(priv) : 0);
     },
 
     /**

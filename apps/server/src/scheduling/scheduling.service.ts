@@ -7,6 +7,7 @@ import type { RateLimiter } from '../rate-limit/rate-limiter.js';
 import type { createDatabase } from '../db/client.js';
 import type { AppConfig } from '../config/schema.js';
 import type { SendOptions } from '../scheduler/message-payload.js';
+import { adoptRow, isPrivateDb } from '../db/private.js';
 
 type Database = ReturnType<typeof createDatabase>;
 
@@ -67,12 +68,18 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
   const defaultSendHour = config?.scheduling.default_send_hour ?? 9;
   const birthdayMessage = config?.scheduling.birthday_message ?? 'Happy Birthday {{name}}! Wishing you a wonderful day.';
   const retentionDays = config?.scheduling.retention_days ?? 90;
+  /** This service works on the account's private database: its jobs must say so. */
+  const isPrivate = isPrivateDb(db);
 
   /**
    * Resolve a contactId from either a direct ID or a phone number.
    * If phone is provided and no contact exists, auto-creates a nameless contact.
    */
   function resolveContactId(contactId?: string, phone?: string, name?: string): string {
+    // A private request has its own, empty contacts table: bring in the saved contact it
+    // refers to. One it creates by phone number then stays in memory.
+    if (contactId) adoptRow(db, 'contacts', 'id', contactId);
+    else if (phone) adoptRow(db, 'contacts', 'phone', normalizeIndianPhone(phone));
     if (contactId) {
       const contact = db
         .select()
@@ -191,7 +198,7 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
 
       // Schedule BullMQ job with appropriate delay
       const delay = Math.max(0, sendAt.getTime() - Date.now());
-      await scheduleOneTimeJob(queue, msg.id, delay, tenantId);
+      await scheduleOneTimeJob(queue, msg.id, delay, tenantId, isPrivate);
 
       // Check and warn after successful schedule
       if (rateLimiter) {
@@ -284,7 +291,7 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
             .get();
 
           const delay = Math.max(0, sendAt.getTime() - Date.now());
-          await scheduleOneTimeJob(queue, msg.id, delay, tenantId);
+          await scheduleOneTimeJob(queue, msg.id, delay, tenantId, isPrivate);
 
           scheduled.push(msg);
         } catch (err) {
@@ -379,7 +386,7 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
       // If scheduledAt changed, reschedule the BullMQ job
       if (newScheduledAt) {
         const newDelay = Math.max(0, newScheduledAt.getTime() - Date.now());
-        await rescheduleJob(queue, messageId, newDelay, tenantId);
+        await rescheduleJob(queue, messageId, newDelay, tenantId, isPrivate);
       }
 
       return msg;
@@ -512,7 +519,7 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
       if (!msg) return null;
 
       // Schedule immediate send
-      await scheduleOneTimeJob(queue, messageId, 0, tenantId);
+      await scheduleOneTimeJob(queue, messageId, 0, tenantId, isPrivate);
 
       return msg;
     },
