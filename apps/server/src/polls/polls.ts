@@ -4,7 +4,7 @@ import { decryptPollVote, type proto } from '@whiskeysockets/baileys';
 import { and, desc, eq } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { createDatabase } from '../db/client.js';
-import { diskDbOf, peekPrivateDb } from '../db/private.js';
+import { diskDbOf, isPrivateDb, peekPrivateDb } from '../db/private.js';
 import { pollVotes, polls } from '../db/schema.js';
 import { isGroupJid, jidToPhone, ownJids } from '../webhooks/jid.js';
 import { siblingsOf } from './poll-accounts.js';
@@ -101,7 +101,9 @@ export async function sendPoll(
       confirmText: b.confirmText,
       secret: secret.toString('base64'),
       senderJids: JSON.stringify([...ownJids(sock)]),
-      stealth: !!input.stealth,
+      // A poll sent by a private request is always stealth: its answers are not kept even
+      // in memory, only passed to the client
+      stealth: !!input.stealth || isPrivateDb(db),
       ref: input.ref ?? null,
       deleteAt,
       deleteReason: deleteAt ? 'expired' : null,

@@ -1170,7 +1170,7 @@ Answer a chat that wrote to this account in the last 24 hours, with text, media 
 | `reaction` | `{messageId, emoji, fromMe?, participant?}` | React to a message. `emoji: ""` removes the reaction. |
 | `poll` | object | Send a poll. Sent on its own, without `text` or `mediaUrl`. See [Polls](#polls). |
 | `typing` | boolean | Show "typing…" briefly before the text. Default `true`. |
-| `private` | boolean | Store nothing about what this sends (a poll or event is kept in memory only; votes and answers come only by webhook). Same as the header `X-Private: true`. See [Private requests](#private-requests). |
+| `private` | boolean | Store nothing about what this sends (a poll or event is kept in memory only, a poll is made `stealth`; votes and answers come only by webhook). Same as the header `X-Private: true`. See [Private requests](#private-requests). |
 | `dontSkip` | boolean | ⚠️ Outside the 24 hour window, queue this instead of answering `409`. **Read [Outside the window](#outside-the-window-dontskip-and-forcepoll) first.** |
 | `forcePoll` | boolean | ⚠️ Outside the window, send `poll` as a real poll (queued). **Read [Outside the window](#outside-the-window-dontskip-and-forcepoll) first.** |
 
@@ -1350,8 +1350,8 @@ The response carries `X-Private: true` when the request was handled privately.
 | API | Private behaviour |
 | --- | --- |
 | `POST /api/messages`, `/bulk` | Queued in memory, sent with the usual delay, counted toward the daily cap. Outcome arrives as `message.status`. Status is kept (without the text) for 24 hours, then dropped. |
-| `POST /api/reply` | Text and media were never stored. A `poll` or `event` is kept in memory, so its votes and answers can still be read and reported. `dontSkip` / `forcePoll` queue privately. |
-| Polls | Votes are kept in memory and sent as `poll.vote`. Add `stealth` if the answers must not be kept even in memory. |
+| `POST /api/reply` | Text and media were never stored. A `poll` or `event` is kept in memory (the question and options, not the answers to a poll), so its votes and answers can still be read and reported. `dontSkip` / `forcePoll` queue privately. |
+| Polls | Always [stealth](#stealth-polls), whether or not you set `stealth`: answers are never kept, not even in memory. Each vote is sent as `poll.vote` and held until a webhook answers 2xx or you acknowledge it. `GET /api/polls/pending` and `/pending/ack` must be private requests too. `GET /api/polls/:id` shows no results. |
 | `POST /api/messages/edit`, `/delete`, `/forward`, `/pin`, `/star` | Work on private messages by `scheduledMessageId`, and on any message by `messageId`. |
 | `POST /api/status` | Nothing was stored before either; `allContacts` still reads your saved contacts. |
 | Extensions | Follow the same rule. See each extension's section. |

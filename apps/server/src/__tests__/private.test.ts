@@ -357,7 +357,7 @@ describe('private on other routes', () => {
     expect(t.db.select().from(webhooks).all()).toHaveLength(1);
   });
 
-  it('a private poll and its votes stay in memory; the vote goes to the webhook', async () => {
+  it('a private poll is stealth: the vote goes to the webhook and the answer is kept nowhere', async () => {
     const t = setup();
     recordInbound(t.db, CHAT, null); // they wrote to us: the reply window is open
     setupWebhookListener(t.sock as never, t.db, logger);
@@ -418,15 +418,23 @@ describe('private on other routes', () => {
       selected: ['Yes'],
       counted: true,
       private: true,
+      stealth: true,
     });
     expect(t.db.select().from(polls).all()).toEqual([]);
     expect(t.db.select().from(pollVotes).all()).toEqual([]);
-    // Results are readable, by a private request only, until a restart
+    // Not even memory keeps the answer
+    expect(privateDb(t.db).select().from(pollVotes).all()).toEqual([]);
+    // The poll itself is visible to a private request only, without results
     expect((await t.call('GET', `/api/polls/${pollId}`)).status).toBe(404);
-    const results = await t.call('GET', `/api/polls/${pollId}`, undefined, {
+    const seen = await t.call('GET', `/api/polls/${pollId}`, undefined, {
       'X-Private': 'true',
     });
-    expect(results.body.results.tally).toEqual({ Yes: 1, No: 0 });
+    expect(seen.body).toMatchObject({ stealth: true, results: null, votes: [] });
+    // The webhook answered 2xx, so the held vote is already acknowledged
+    const pending = await t.call('GET', '/api/polls/pending', undefined, {
+      'X-Private': 'true',
+    });
+    expect(pending.body.votes).toEqual([]);
     expect(diskBytes().includes(SECRET_TEXT)).toBe(false);
   });
 });
