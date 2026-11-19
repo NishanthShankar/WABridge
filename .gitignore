@@ -40,3 +40,6 @@ packages/multi-tenant/
 
 # Logs
 *.log
+
+# Local notes, not for the public repo
+api-key-handoff.md
