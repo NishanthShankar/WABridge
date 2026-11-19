@@ -111,7 +111,8 @@ def describe(d, kind):
     elif owner:
         who += f", which is {owner}'s key"
     verdict = "ALLOWED (warn mode)" if kind == "allowed" else "refused"
-    return f"• {d.get('tenant') or '?'}: {d.get('method')} {route(d.get('path'))} with {who} → {verdict}"
+    src = ", ".join(x for x in (d.get("ip") and f"from {d['ip']}", d.get("userAgent") and f"client {d['userAgent'][:60]}") if x)
+    return f"• {d.get('tenant') or '?'}: {d.get('method')} {route(d.get('path'))} with {who} → {verdict}" + (f"\n  {src}" if src else "")
 
 
 def api_key():
