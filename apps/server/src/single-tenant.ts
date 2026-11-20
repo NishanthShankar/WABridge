@@ -15,6 +15,7 @@ import { createRateLimiter } from './rate-limit/rate-limiter.js';
 import { createWebSocketHandler } from './api/ws.js';
 import { setupDeliveryListener } from './delivery/delivery.listener.js';
 import { setupWebhookListener } from './webhooks/webhook.listener.js';
+import { announceStarted } from './webhooks/boot.js';
 import { type Extension, attachExtensions } from './extensions.js';
 
 /**
@@ -113,6 +114,7 @@ export async function createSingleTenantPlugin(params: {
         logger.info('Delivery status + webhook listeners attached');
       });
 
+      announceStarted(db, logger.child({ module: 'webhooks' }));
       logger.info('Starting WhatsApp connection...');
       await connectionManager.connect();
     },

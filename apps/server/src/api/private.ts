@@ -5,6 +5,7 @@ import {
   isDiskWriteRefused,
   privateContext,
 } from '../db/private.js';
+import { STARTED_AT } from '../webhooks/boot.js';
 
 const HEADER = 'x-private';
 
@@ -79,6 +80,20 @@ export function privateMiddleware(): MiddlewareHandler {
         409,
       );
       return;
+    }
+    // A private GET for something this server no longer holds: say that plainly, so the
+    // client can tell "lost in a restart, or dropped after a day" from "still queued".
+    if (c.req.method === 'GET' && c.res.status === 404) {
+      c.res = undefined;
+      c.res = c.json(
+        {
+          error: 'unknown_private',
+          message:
+            'Nothing private with this id is held in memory. Private items are gone after a restart, and a finished message is dropped after 24 hours.',
+          startedAt: STARTED_AT.toISOString(),
+        },
+        404,
+      );
     }
     c.res.headers.set('X-Private', 'true');
   };

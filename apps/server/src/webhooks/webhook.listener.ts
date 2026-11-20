@@ -29,6 +29,7 @@ import {
 } from '../polls/polls.js';
 import { ackVote, holdVote } from '../polls/stealth-inbox.js';
 import { setupPrivateDelivery } from '../scheduler/private-callbacks.js';
+import { setAccountPhone } from './account.js';
 import { recordInbound } from './chat-activity.js';
 import { type GroupCache, createGroupCache } from './group-cache.js';
 import { isGroupJid, jidToPhone, ownJids } from './jid.js';
@@ -70,6 +71,8 @@ export function setupWebhookListener(
 ): void {
   const groupCache = createGroupCache(sock, logger);
   const service = createWebhooksService(db);
+  // Every webhook says which of our numbers it is about (accountPhone)
+  setAccountPhone(db, sock.user?.id ? jidToPhone(sock.user.id) : null);
   // Presence and read receipts: presence.update and message.read webhooks, GET /api/chats/:id
   setupChatStateListener(sock, db, logger);
   // Poll deletes that are due (deleteAt) or being retried
@@ -173,7 +176,6 @@ async function handleMessage(
 ): Promise<void> {
   const key = msg.key as WAMessageKey | null | undefined;
   if (!key || key.fromMe) return; // skip outgoing
-  if (!msg.message) return;
 
   const remoteJid = key.remoteJid;
   if (!remoteJid || remoteJid === 'status@broadcast') return;
@@ -186,6 +188,8 @@ async function handleMessage(
   const senderLid = authorJid.endsWith('@lid') ? authorJid : null;
   const altJid = isGroup ? key.participantAlt : key.remoteJidAlt;
   const senderPhone = await resolvePhone(authorJid, sock, logger, altJid);
+
+  if (!msg.message) return;
 
   const content = normalizeMessageContent(msg.message);
   if (!content) return;
@@ -389,6 +393,8 @@ async function handleMessage(
     hasMedia: !!media,
     rawType: contentType ?? Object.keys(msg.message)[0],
     isVoiceNote: !!content.audioMessage?.ptt,
+    /** Sent as "view once". Whether its media reaches a linked device is up to WhatsApp. */
+    viewOnce: isViewOnce(msg.message, content),
     mentions,
     botMentioned: mentions.some((m) => m.isMe),
     quoted,
@@ -402,6 +408,17 @@ async function handleMessage(
       applyReplyActions(sock, msg, remoteJid, actions, logger),
     );
   }
+}
+
+function isViewOnce(raw: proto.IMessage, content: proto.IMessage): boolean {
+  return (
+    !!raw.viewOnceMessage ||
+    !!raw.viewOnceMessageV2 ||
+    !!raw.viewOnceMessageV2Extension ||
+    !!content.imageMessage?.viewOnce ||
+    !!content.videoMessage?.viewOnce ||
+    !!content.audioMessage?.viewOnce
+  );
 }
 
 function extractText(content: proto.IMessage | undefined): string | null {
@@ -634,7 +651,7 @@ const RETRY_DELAYS_MS = [2_000, 10_000];
  * so receivers must de-duplicate on messageId / eventId. X-Webhook-Attempt counts from 1.
  */
 export function fireWebhook(
-  webhook: Pick<Webhook, 'url' | 'secret'>,
+  webhook: Pick<Webhook, 'url' | 'secret'> & { account?: string | null },
   payload: object,
   logger: Logger,
   onActions?: (actions: ReplyActions) => Promise<void>,
@@ -642,7 +659,10 @@ export function fireWebhook(
   onDelivered?: () => void,
 ): void {
   const { url, secret } = webhook;
-  const body = JSON.stringify(payload);
+  // Which of our numbers this is about: a tenant may run more than one
+  const body = JSON.stringify(
+    webhook.account ? { ...payload, accountPhone: webhook.account } : payload,
+  );
   const signature = secret
     ? createHmac('sha256', secret).update(body).digest('hex')
     : null;

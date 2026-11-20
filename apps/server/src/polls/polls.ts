@@ -215,11 +215,15 @@ export function locatePoll(
     if (priv && poll) home = { db: priv, poll };
   }
   if (!home) {
-    for (const s of siblings) {
-      const poll = getPoll(s.db, pollId);
-      if (poll) {
-        home = { db: s.db, poll };
-        break;
+    // Poll secrets are the tenant's, not one number's: a sibling's polls count too, and so
+    // do the private ones a sibling holds (or was given back to it by an extension)
+    search: for (const s of siblings) {
+      for (const from of [s.db, peekPrivateDb(s.db)]) {
+        const poll = from ? getPoll(from, pollId) : undefined;
+        if (from && poll) {
+          home = { db: from, poll };
+          break search;
+        }
       }
     }
   }

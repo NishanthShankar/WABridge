@@ -19,6 +19,12 @@ export const FEATURES = [
   'reply-window', // replyWindow on /api/reply, GET /api/reply/window, GET /api/chats/:id
   'chat-presence', // presence.update + message.read webhooks, GET /api/chats/:id/presence
   'reply-dont-skip', // dontSkip / forcePoll on POST /api/reply
+  'bridge-started', // bridge.started webhook on every boot; message.status failed lost_on_restart
+  'private-unknown', // 404 unknown_private on a private GET for an id no longer held
+  'account-phone', // accountPhone on every webhook: which of the tenant's numbers it is about
+  'standby', // GET/PUT /api/standby: connected but sending no webhooks
+  'tenant-poll-secrets', // a poll one number sent can be read by another number of the tenant
+  'view-once-flag', // viewOnce on message.received
   'private', // X-Private: true or "private": true on any request: nothing it sends is stored; message.status webhooks
   'poll-stealth', // poll.stealth: answers held in memory until acknowledged, never stored
   'poll-lifecycle', // poll ref, deleteAt, delete retries, poll.deleted / poll.delete_failed, lookup by scheduledMessageId

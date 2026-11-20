@@ -5,7 +5,7 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import QRCode from 'qrcode';
-import type { Logger } from 'pino';
+import pino, { type Logger } from 'pino';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 
 import type { AppConfig } from '../config/schema.js';
@@ -140,6 +140,12 @@ export class ConnectionManager {
 
     const sock = makeWASocket({
       auth: state,
+      // The WhatsApp library's own log. Fixed at info, whatever log_level says: at debug and
+      // trace it prints decrypted message content, which must never reach a log.
+      logger: pino({
+        level: 'info',
+        timestamp: () => `,"time":"${new Date().toJSON()}"`,
+      }).child({ class: 'baileys' }),
       version,
       // NOTE: printQRInTerminal is deprecated in Baileys v7 -- we handle QR display ourselves
       browser: [this.config.whatsapp.browser_name, 'Chrome', '22.0.0'],

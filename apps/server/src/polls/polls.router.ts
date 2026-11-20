@@ -2,7 +2,7 @@ import type { Queue } from 'bullmq';
 import { and, eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { type AppContext, getContext } from '../context.js';
-import { scheduledMessages } from '../db/schema.js';
+import { polls, scheduledMessages } from '../db/schema.js';
 import { createSchedulingService } from '../scheduling/scheduling.service.js';
 import { toJid } from '../webhooks/jid.js';
 import {

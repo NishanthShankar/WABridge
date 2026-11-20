@@ -57,6 +57,32 @@ export function notifyMessageStatus(
     fireWebhook(hook, payload, logger);
 }
 
+/**
+ * A queued private message whose job came up after a restart: nothing of it is left but its
+ * id, which the queue kept. Report it as failed so the client can send it again.
+ */
+export function notifyLostMessage(
+  db: Database,
+  logger: Logger,
+  scheduledMessageId: string,
+): void {
+  const payload = {
+    event: 'message.status',
+    eventId: randomUUID(),
+    timestamp: new Date().toISOString(),
+    private: true,
+    scheduledMessageId,
+    messageId: null,
+    status: 'failed',
+    reason: 'lost_on_restart',
+    chatId: null,
+    phone: null,
+    isGroup: null,
+  };
+  for (const hook of createWebhooksService(db).getAllEvents())
+    fireWebhook(hook, payload, logger);
+}
+
 /** What was sent is no longer needed once it is out: keep only ids, times and status. */
 export function scrubSent(db: Database, id: string): void {
   db.update(scheduledMessages)

@@ -30,11 +30,14 @@ import {
   scheduledMessages,
   webhooks,
 } from '../db/schema.js';
+import { setPollSiblings } from '../polls/poll-accounts.js';
+import { locatePoll } from '../polls/polls.js';
 import { createPollsRouter } from '../polls/polls.router.js';
 import { createRateLimiter } from '../rate-limit/rate-limiter.js';
 import { createReplyRouter } from '../reply/reply.router.js';
 import { contextFor, processSendJob } from '../scheduler/worker.js';
 import { createSchedulingRouter } from '../scheduling/scheduling.router.js';
+import { announceStarted } from '../webhooks/boot.js';
 import { recordInbound } from '../webhooks/chat-activity.js';
 import { setupWebhookListener } from '../webhooks/webhook.listener.js';
 import { createWebhooksRouter } from '../webhooks/webhooks.router.js';
@@ -47,6 +50,34 @@ const CONTACT_ID = '0b0e2c1e-6f0a-4a57-9d3e-2f1a4c5b6d7e';
 const VOTER = '555000111@lid';
 const OUR_PN = '919800000009@s.whatsapp.net';
 const tick = () => new Promise((r) => setTimeout(r, 20));
+
+/** A vote, encrypted the way the voter's phone does. */
+function encryptVote(pollId: string, secret: Buffer, option: string) {
+  const sign = Buffer.concat([
+    Buffer.from(pollId),
+    Buffer.from(OUR_PN),
+    Buffer.from(VOTER),
+    Buffer.from('Poll Vote'),
+    new Uint8Array([1]),
+  ]);
+  const key0 = createHmac('sha256', new Uint8Array(32)).update(secret).digest();
+  const decKey = createHmac('sha256', key0).update(sign).digest();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', decKey, iv);
+  cipher.setAAD(Buffer.from(`${pollId}\u0000${VOTER}`));
+  const plain = proto.Message.PollVoteMessage.encode({
+    selectedOptions: [createHash('sha256').update(option).digest()],
+  }).finish();
+  const enc = Buffer.concat([
+    cipher.update(plain),
+    cipher.final(),
+    cipher.getAuthTag(),
+  ]);
+  return {
+    pollCreationMessageKey: { id: pollId },
+    vote: { encPayload: enc, encIv: iv },
+  };
+}
 
 const hooks: Array<Record<string, unknown>> = [];
 let dir: string;
@@ -340,6 +371,93 @@ describe('a private queued message (POST /api/messages)', () => {
     closePrivateDb(t.db); // the process ended; memory is gone
     await t.runJob(t.jobs[0]);
     expect(t.sent).toEqual([]);
+    // ...but the client is told which message it was, so it can send it again
+    await tick();
+    expect(hooks).toHaveLength(1);
+    expect(hooks[0]).toMatchObject({
+      event: 'message.status',
+      private: true,
+      scheduledMessageId: t.jobs[0].scheduledMessageId,
+      status: 'failed',
+      reason: 'lost_on_restart',
+    });
+  });
+
+  it('a private GET for an id that is no longer held says unknown_private', async () => {
+    const t = setup();
+    const res = await t.call(
+      'POST',
+      '/api/messages',
+      { phone: PHONE, content: SECRET_TEXT },
+      { 'X-Private': 'true' },
+    );
+    const path = `/api/messages/${res.body.id}`;
+    const priv = { 'X-Private': 'true' };
+    expect((await t.call('GET', path, undefined, priv)).body.status).toBe(
+      'pending',
+    );
+    closePrivateDb(t.db); // restart
+    const gone = await t.call('GET', path, undefined, priv);
+    expect(gone.status).toBe(404);
+    expect(gone.body.error).toBe('unknown_private');
+    expect(typeof gone.body.startedAt).toBe('string');
+    // A normal request keeps its normal 404
+    expect((await t.call('GET', path)).body.error).not.toBe('unknown_private');
+  });
+});
+
+describe('bridge.started', () => {
+  it('is sent once per account per process, to allEvents webhooks', async () => {
+    const t = setup();
+    announceStarted(t.db, logger);
+    announceStarted(t.db, logger);
+    await tick();
+    expect(hooks).toHaveLength(1);
+    expect(hooks[0]).toMatchObject({ event: 'bridge.started' });
+    expect(Date.parse(hooks[0].startedAt as string)).toBeLessThanOrEqual(
+      Date.now(),
+    );
+  });
+});
+
+describe('poll secrets belong to the tenant, private ones included', () => {
+  it('a second number finds a private poll the first number sent, once that number is unlinked', async () => {
+    const main = setup();
+    const spareDir = mkdtempSync(join(tmpdir(), 'wab-private-spare-'));
+    try {
+      const spareDb = createDatabase(join(spareDir, 'openwa.db'));
+      migrate(spareDb, {
+        migrationsFolder: resolve(__dirname, '../../drizzle'),
+      });
+      const spareSock = {
+        user: { id: '919800000010:3@s.whatsapp.net', lid: '999111:3@lid' },
+      };
+      const accounts = [
+        { db: main.db, getSocket: () => main.sock as never },
+        { db: spareDb, getSocket: () => spareSock as never },
+      ];
+      setPollSiblings((db) => accounts.filter((a) => a.db !== db));
+
+      recordInbound(main.db, CHAT, null);
+      const sent = await main.call(
+        'POST',
+        '/api/reply',
+        { chatId: CHAT, poll: { name: SECRET_TEXT, options: ['Yes', 'No'] } },
+        { 'X-Private': 'true' },
+      );
+      const pollId = sent.body.messageId as string;
+
+      // While the sender is linked, the spare leaves its votes alone
+      expect(locatePoll(spareDb, spareSock as never, pollId)).toBeNull();
+      // The sender is banned or unlinked: the spare can read them, from the sender's memory
+      (main.sock as { user?: unknown }).user = undefined;
+      expect(locatePoll(spareDb, spareSock as never, pollId)?.db).toBe(
+        privateDb(main.db),
+      );
+    } finally {
+      setPollSiblings(null);
+      rmSync(spareDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -372,40 +490,13 @@ describe('private on other routes', () => {
     const pollId = res.body.messageId as string;
     expect(t.db.select().from(polls).all()).toEqual([]);
 
-    // A vote, encrypted the way the voter's phone does
-    const secret = t.secrets[0];
-    const sign = Buffer.concat([
-      Buffer.from(pollId),
-      Buffer.from(OUR_PN),
-      Buffer.from(VOTER),
-      Buffer.from('Poll Vote'),
-      new Uint8Array([1]),
-    ]);
-    const key0 = createHmac('sha256', new Uint8Array(32))
-      .update(secret)
-      .digest();
-    const decKey = createHmac('sha256', key0).update(sign).digest();
-    const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', decKey, iv);
-    cipher.setAAD(Buffer.from(`${pollId}\u0000${VOTER}`));
-    const plain = proto.Message.PollVoteMessage.encode({
-      selectedOptions: [createHash('sha256').update('Yes').digest()],
-    }).finish();
-    const enc = Buffer.concat([
-      cipher.update(plain),
-      cipher.final(),
-      cipher.getAuthTag(),
-    ]);
     t.sock.ev.emit('messages.upsert', {
       type: 'notify',
       messages: [
         {
           key: { remoteJid: VOTER, id: 'VOTE1', fromMe: false },
           message: {
-            pollUpdateMessage: {
-              pollCreationMessageKey: { id: pollId },
-              vote: { encPayload: enc, encIv: iv },
-            },
+            pollUpdateMessage: encryptVote(pollId, t.secrets[0], 'Yes'),
           },
         },
       ],
@@ -429,7 +520,11 @@ describe('private on other routes', () => {
     const seen = await t.call('GET', `/api/polls/${pollId}`, undefined, {
       'X-Private': 'true',
     });
-    expect(seen.body).toMatchObject({ stealth: true, results: null, votes: [] });
+    expect(seen.body).toMatchObject({
+      stealth: true,
+      results: null,
+      votes: [],
+    });
     // The webhook answered 2xx, so the held vote is already acknowledged
     const pending = await t.call('GET', '/api/polls/pending', undefined, {
       'X-Private': 'true',

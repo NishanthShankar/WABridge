@@ -14,6 +14,7 @@ import { errorMessage } from '../net/safe-fetch.js';
 import pino, { type Logger } from 'pino';
 import { privateContext } from '../db/private.js';
 import {
+  notifyLostMessage,
   notifyMessageStatus,
   scrubSent,
   sweepPrivateMessages,
@@ -173,7 +174,12 @@ export async function processSendJob(
     .where(eq(scheduledMessages.id, scheduledMessageId))
     .get();
 
-  if (!msg) return;
+  if (!msg) {
+    // A private message that is no longer in memory: the server restarted since it was
+    // queued. It cannot be sent; tell the client which one, so it can send it again.
+    if (ctx.private) notifyLostMessage(db, logger, scheduledMessageId);
+    return;
+  }
   if (msg.status === 'cancelled') return;
 
   // Check daily cap before sending (second layer of enforcement)

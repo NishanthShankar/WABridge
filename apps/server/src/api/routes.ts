@@ -9,6 +9,7 @@ import type { ServerPlugin } from '../plugin.js';
 import type { Extension } from '../extensions.js';
 import { getContext } from '../context.js';
 import { privateMiddleware } from './private.js';
+import { createStandbyRouter } from '../webhooks/standby.router.js';
 import { createHealthRouter } from './health.js';
 import { renderStatusPage } from '../web/status-page.js';
 import { createContactsRouter } from '../contacts/contacts.router.js';
@@ -168,6 +169,7 @@ export function createApp(
   app.route('/api/reply', createReplyRouter(messageQueue));
   app.route('/api/polls', createPollsRouter(messageQueue));
   app.route('/api/lists', createListsRouter());
+  app.route('/api/standby', createStandbyRouter());
   app.route('/api/chats', createChatsRouter());
   app.route('/api/profile', createProfileRouter());
   app.route('/api/status', createStatusRouter());

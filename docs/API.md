@@ -1357,7 +1357,14 @@ The response carries `X-Private: true` when the request was handled privately.
 | Extensions | Follow the same rule. See each extension's section. |
 | Anything that must store data (webhooks, templates, recurring rules, groups sync, channels create) | `409 not_available_private`. Send it without `private`. |
 
-**Restart.** A private message that is still queued when the server restarts is **not sent**, and no webhook can tell you, because nothing was kept. For a message that must go out, either send it without `scheduledAt` and wait for `message.status`, or do not make it private. A private poll or event sent before a restart can no longer be read afterwards.
+**Restart.** Everything private is in memory, so a restart empties it. You are told, and can recover:
+
+- **`bridge.started`** is sent on every boot, once per account, to `allEvents` webhooks: `{ "event": "bridge.started", "eventId", "timestamp", "startedAt" }`. Treat every private message that has had no `message.status` as unsent, and restore your private polls.
+- **A queued private message** is not sent after a restart. When its turn comes the bridge sends `message.status` with `"status": "failed"`, `"reason": "lost_on_restart"` and its `scheduledMessageId` (the queue keeps the id, nothing else; `chatId` and `phone` are `null`). Send it again.
+- **A private GET for an id the server no longer holds** answers `404` with `"error": "unknown_private"` and the server's `startedAt`. That means lost in a restart (or, for a finished message, dropped after 24 hours), not "still queued": a queued message answers `200` with `"status": "pending"`.
+- **A private event card** sent before a restart can no longer have its answers read.
+
+**Swap and crash dumps.** "Nothing reaches the disk" is enforced for the database and logs. Private data does sit in the server's memory while it is needed, and whether memory can be paged to disk depends on the host. On macOS swap is encrypted with a key that never leaves memory; on Linux, run with swap off or encrypted, and `ulimit -c 0`.
 
 **Errors:** `409 not_available_private` (above), `501 private_unavailable` (this server cannot run private requests).
 
@@ -1632,7 +1639,11 @@ Every `message.received` now also carries:
 }
 ```
 
-In a group, `from` is the member who wrote. `quoted` is null unless the message replies to another.
+In a group, `from` is the member who wrote. `quoted` is null unless the message replies to another. `viewOnce` is `true` for a message sent as "view once"; whether WhatsApp hands a linked device its media at all is up to WhatsApp, so expect `hasMedia` to be `false` on some of them.
+
+Every webhook, of every kind, carries **`accountPhone`**: the number of yours it is about. With more than one number on a tenant, that is how you tell them apart. It is absent only before the number has connected since the last boot (`bridge.started` can be such a case).
+
+Also sent to `allEvents` webhooks: `bridge.started` (see [Private requests](#private-requests)) and `message.status` for private messages.
 
 Other events (allEvents only): `message.reaction` (`messageId`, `targetMessageId`, `targetFromMe`, `emoji`, null when removed), `message.edited` (`messageId` of the edited message, new `text`), `message.deleted` (`messageId`), `group.joined` (this account was added to a group, or created one: `author` is the phone of whoever added it, `authorLid` their LID when WhatsApp gave one, `owner` the phone of the group's creator, `participantCount`; `author` is null when WhatsApp hides the number and the bridge can't resolve it), `group.participants` (`action`: add, remove, promote, demote, modify; `participants: [{jid, phone, isMe}]`, `author`). Non-message events carry an `eventId` to de-duplicate on.
 
@@ -1885,6 +1896,19 @@ A channel reads as `{ "id", "name", "description", "link", "followers", "verifie
 ```
 
 Text, or an `image` or `video` from a public URL with `text` as its caption. Sent at once, not queued, and not counted toward the daily cap. At most 6 posts per channel per minute (`429 too_many_posts`). Response `201`: `{ "id", "messageId" }`.
+
+## A second number: standby
+
+A tenant can keep a spare number in the same groups as its main one, ready to take over if the main number is banned. That needs a multiuser tenant (one user per number, below). `GET /api/health` lists `"standby"`, `"account-phone"` and `"tenant-poll-secrets"`.
+
+- **Which number a webhook is about:** `accountPhone`, on every webhook.
+- **Standby:** a number on standby stays connected and in its groups, and keeps what it needs (its keys, the reply window), but sends **no webhooks at all**, so events do not arrive twice.
+  - `GET /api/standby` (user key): `{ "standby": false, "accountPhone": "919800000009" }`
+  - `PUT /api/standby` with `{ "standby": true }` or `false`: the same shape back.
+  - **One call to switch:** `POST /tenant/users/:id/live` (tenant key) makes that user's number the live one and puts every other enabled user of the tenant on standby: `{ "live": "<user id>", "standby": ["<user id>", …] }`. `GET /tenant/users` shows each user's `standby`.
+- **Polls belong to the tenant, not the number.** A vote on a poll the main number sent, arriving on the spare, is read by the spare once the main number is no longer linked (banned, logged out or re-paired). It is stored with the poll and reported to the **sending** user's webhooks with `receivedBy`, so keep that user enabled and off standby if you want those votes, or re-register its webhook on the spare. While the main number is linked, its votes are left to it. This holds for private polls and their resume values too. See [Changing number](#changing-number).
+- **Set per number:** webhooks and templates are each number's own. Register them on the spare as well.
+- **A separate outgoing network address per number** is not available: every number connects from the server's own address.
 
 ## Multiuser tenants
 

@@ -19,6 +19,8 @@
     "./webhooks/webhook.listener": "./src/webhooks/webhook.listener.ts",
     "./webhooks/webhooks.service": "./src/webhooks/webhooks.service.ts",
     "./webhooks/jid": "./src/webhooks/jid.ts",
+    "./webhooks/boot": "./src/webhooks/boot.ts",
+    "./webhooks/account": "./src/webhooks/account.ts",
     "./polls/poll-accounts": "./src/polls/poll-accounts.ts",
     "./templates/renderer": "./src/templates/renderer.ts",
     "./templates/templates.service": "./src/templates/templates.service.ts",
@@ -29,7 +31,8 @@
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx src/db/migrate.ts"
+    "db:migrate": "tsx src/db/migrate.ts",
+    "canary-scan": "tsx src/tools/canary-scan.ts"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
