@@ -27,7 +27,12 @@ export function notifyMessageStatus(
   db: Database,
   logger: Logger,
   row: MessageRow,
-  fields: { status: 'sent' | 'delivered' | 'failed'; reason?: string },
+  fields: {
+    status: 'sent' | 'delivered' | 'failed';
+    reason?: string;
+    /** Further fields for the payload (polls/private-poll.ts) */
+    extra?: Record<string, unknown>;
+  },
 ): void {
   let chatId: string | null = row.groupId;
   let phone: string | null = null;
@@ -52,6 +57,7 @@ export function notifyMessageStatus(
     chatId,
     phone,
     isGroup: !!row.groupId,
+    ...(fields.extra ?? {}),
   };
   for (const hook of createWebhooksService(db).getAllEvents())
     fireWebhook(hook, payload, logger);

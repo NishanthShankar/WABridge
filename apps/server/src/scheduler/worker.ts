@@ -13,6 +13,8 @@ import { sendStored } from './send-stored.js';
 import { errorMessage } from '../net/safe-fetch.js';
 import pino, { type Logger } from 'pino';
 import { privateContext } from '../db/private.js';
+import { privatePollFields } from '../polls/private-poll.js';
+import { getPoll } from '../polls/polls.js';
 import {
   notifyLostMessage,
   notifyMessageStatus,
@@ -262,7 +264,12 @@ export async function processSendJob(
   if (ctx.private && sentRow) {
     // It is out: forget what it said, tell the client, and drop what is a day old
     scrubSent(db, msg.id);
-    notifyMessageStatus(db, logger, sentRow, { status: 'sent' });
+    // A private poll: extensions may have something to tell the client about it
+    const poll = msg.mediaType === 'poll' && sentId ? getPoll(db, sentId) : null;
+    notifyMessageStatus(db, logger, sentRow, {
+      status: 'sent',
+      ...(poll ? { extra: privatePollFields(poll) } : {}),
+    });
     sweepPrivateMessages(db);
   }
 

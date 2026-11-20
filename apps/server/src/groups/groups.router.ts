@@ -4,6 +4,8 @@ import { createGroupSchema, groupPictureSchema, groupSettingsSchema, joinGroupSc
 import { answerJoinRequests, inviteCode, JoinCapError, joinByInvite, listJoinRequests, previewInvite, revokeInvite } from './group-membership.js';
 import { applyGroupSettings, createGroup, GroupCapError, inviteLink, readGroupSettings, setGroupPicture, updateGroupInfo, updateParticipants } from './group-admin.js';
 import { createGroupsService } from './groups.service.js';
+import { groupCapRule } from './cap-rules.js';
+import { type GroupCreatePlan, groupCreateHooks } from './create-hooks.js';
 import { getContext } from '../context.js';
 import { jidToPhone, ownJids } from '../webhooks/jid.js';
 
@@ -135,13 +137,68 @@ export function createGroupsRouter() {
     const { db, getSocket, config } = getContext(c);
     const sock = getSocket();
     if (!sock) return c.json({ error: 'WhatsApp not connected' }, 503);
+    const input = c.req.valid('json');
+    // Extensions may read a field of their own from the body (groups/create-hooks.ts).
+    // One that refuses stops the group from being created at all.
+    const plans: GroupCreatePlan[] = [];
+    const settle = () => {
+      for (const plan of plans) {
+        try {
+          plan.settled?.();
+        } catch {
+          // One extension's failure must not keep the others waiting
+        }
+      }
+    };
+    if (groupCreateHooks().length) {
+      const body = ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>;
+      for (const hook of groupCreateHooks()) {
+        if (body[hook.field] === undefined || body[hook.field] === null) continue;
+        let plan: ReturnType<typeof hook.prepare>;
+        try {
+          plan = hook.prepare(getContext(c), body[hook.field]);
+        } catch (err) {
+          settle();
+          return c.json({ error: 'invalid_request', message: (err as Error).message }, 400);
+        }
+        if ('refuse' in plan) {
+          settle();
+          return c.json(plan.refuse.body, plan.refuse.status);
+        }
+        plans.push(plan);
+      }
+    }
+    // An extension may allow more groups a day for groups it vouches for (groups/cap-rules.ts)
+    const rule = groupCapRule();
+    const higherCap = rule
+      ? {
+          kind: rule.kind,
+          cap: rule.cap(config),
+          qualifies: (memberJids: string[]) => rule.qualifies({ db, sock }, memberJids),
+          hint: rule.hint,
+        }
+      : undefined;
     try {
-      const result = await createGroup(db, sock, config.groups.create_daily_cap, c.req.valid('json'));
-      return c.json(result, 201);
+      const result = await createGroup(
+        db,
+        sock,
+        { cap: config.groups.create_daily_cap, higher: higherCap },
+        input,
+        plans.some((p) => p.onCreated)
+          ? (groupJid) => {
+              for (const plan of plans) plan.onCreated?.(groupJid);
+            }
+          : undefined,
+      );
+      let extra: Record<string, unknown> = {};
+      for (const plan of plans) extra = { ...extra, ...(plan.respond?.(result) ?? {}) };
+      return c.json({ ...result, ...extra }, 201);
     } catch (err) {
       const e = err as Error & { statusCode?: number };
       if (err instanceof GroupCapError) return c.json({ error: 'group_cap_reached', message: e.message }, 429);
       return c.json({ error: e.message }, (e.statusCode as 400) ?? 502);
+    } finally {
+      settle();
     }
   });
 

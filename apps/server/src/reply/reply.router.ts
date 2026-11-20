@@ -3,7 +3,9 @@ import type { Queue } from 'bullmq';
 import { Hono } from 'hono';
 import { chatCandidates, replyWindow } from '../chats/chat-state.js';
 import { getContext } from '../context.js';
-import { sendPoll } from '../polls/polls.js';
+import { isPrivateDb } from '../db/private.js';
+import { privatePollFields } from '../polls/private-poll.js';
+import { getPoll, sendPoll } from '../polls/polls.js';
 import {
   buildMessagePayload,
   pickSendOptions,
@@ -135,7 +137,7 @@ export function createReplyRouter(queue?: Queue) {
       reactionId: string | null;
       chatId: string;
       replyWindow: typeof window;
-    } = {
+    } & Record<string, unknown> = {
       messageId: null,
       reactionId: null,
       chatId: jid,
@@ -153,6 +155,12 @@ export function createReplyRouter(queue?: Queue) {
 
       if (input.poll) {
         result.messageId = await sendPoll(sock, db, jid, input.poll);
+        // A private poll is gone after a restart: extensions may add something about it
+        const poll =
+          isPrivateDb(db) && result.messageId
+            ? getPoll(db, result.messageId)
+            : undefined;
+        if (poll) Object.assign(result, privatePollFields(poll));
       }
 
       if (input.text || input.mediaUrl) {

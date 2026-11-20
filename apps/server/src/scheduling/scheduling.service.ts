@@ -8,6 +8,8 @@ import type { createDatabase } from '../db/client.js';
 import type { AppConfig } from '../config/schema.js';
 import type { SendOptions } from '../scheduler/message-payload.js';
 import { adoptRow, isPrivateDb } from '../db/private.js';
+import { noStoreRuleFor } from '../messages/no-store.js';
+import { toJid } from '../webhooks/jid.js';
 
 type Database = ReturnType<typeof createDatabase>;
 
@@ -137,6 +139,32 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
     return id;
   }
 
+  /**
+   * The last line of defence for chats the server keeps nothing of (messages/no-store.ts): a
+   * message for one is never written to the on-disk database. Requests are made private
+   * before they get here (api/private.ts); if one ever is not, it is refused rather than stored.
+   */
+  function refuseNoStoreUnlessPrivate(groupId?: string, contactId?: string, phone?: string): void {
+    if (isPrivate) return;
+    const jids: string[] = [];
+    if (groupId) jids.push(groupId);
+    if (phone) {
+      const jid = toJid(normalizeIndianPhone(phone));
+      if (jid) jids.push(jid);
+    }
+    if (contactId) {
+      const contact = db.select({ phone: contacts.phone }).from(contacts).where(eq(contacts.id, contactId)).get();
+      const jid = contact ? toJid(contact.phone) : null;
+      if (jid) jids.push(jid);
+    }
+    const rule = noStoreRuleFor(db, jids);
+    if (rule) {
+      const error = new Error(rule.messages?.notStored ?? 'What is sent into this chat is never stored on the server');
+      (error as Error & { statusCode: number }).statusCode = 409;
+      throw error;
+    }
+  }
+
   return {
     /**
      * Schedule a message for future delivery, or send immediately.
@@ -147,6 +175,7 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
      * @throws Error if contact does not exist
      */
     async scheduleMessage(contactId: string | undefined, content: string, scheduledAt?: string, phone?: string, name?: string, mediaUrl?: string, mediaType?: string, groupId?: string, options?: SendOptions | null) {
+      refuseNoStoreUnlessPrivate(groupId, contactId, phone);
       // Group messages skip contact resolution
       let resolvedContactId: string | null = null;
       if (groupId) {
@@ -252,6 +281,7 @@ export function createSchedulingService(db: Database, queue: Queue, config?: App
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         try {
+          refuseNoStoreUnlessPrivate(item.groupId, item.contactId, item.phone);
           let resolvedContactId: string | null = null;
           if (item.groupId) {
             const group = db.select().from(groups).where(eq(groups.id, item.groupId)).get();

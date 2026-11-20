@@ -49,13 +49,24 @@ export const FEATURES = [
   'group-settings', // GET/PATCH /api/groups/:id/settings, settings on POST /api/groups
 ];
 
+/** Feature names added by extensions (extensions.ts). */
+const extra = new Set<string>();
+export function registerFeatures(names: string[]): void {
+  for (const name of names) extra.add(name);
+}
+
+/** The server's own features and those of its extensions. */
+export function allFeatures(): string[] {
+  return [...FEATURES, ...[...extra].filter((n) => !FEATURES.includes(n))];
+}
+
 export function createHealthRouter() {
   const router = new Hono();
 
   router.get('/health', (c) => {
     const { getHealth } = getContext(c);
     // `features` lets a client check what this server can do before it relies on it.
-    return c.json({ ...getHealth(), features: FEATURES });
+    return c.json({ ...getHealth(), features: allFeatures() });
   });
 
   return router;

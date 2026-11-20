@@ -1659,7 +1659,12 @@ Besides `delete` and `ephemeral`, a receiver's JSON answer may contain `"read": 
 
 ### POST /api/groups
 
-Create a group from this account, which becomes its admin. Capped per day (IST) by `groups.create_daily_cap` (default 5); over the cap you get `429 group_cap_reached`. Creating many groups quickly is a strong ban signal.
+Create a group from this account, which becomes its admin. Capped per day (IST); over the cap you get `429 group_cap_reached`. Creating many groups quickly is a strong ban signal.
+
+- **5 a day** (`groups.create_daily_cap`).
+- An extension on the server may allow more for certain groups, up to a higher daily total of its own. See that extension's section. Without one the cap is 5.
+
+The response's `cap` says which cap the group counted against: `{ "kind": "default", "createdToday", "dailyCap" }`, with the extension's own `kind` for a group that counted against its higher cap.
 
 ```json
 { "name": "Flat 4B", "participants": ["+91 98123 45678", "919988776655"], "description": "optional",

@@ -99,10 +99,18 @@ export function findMessage(
  * Remember every message this connection sees: incoming ones and the ones it sends itself
  * (Baileys reports its own sends as 'append'). History sync is skipped.
  */
-export function setupRecentMessages(sock: WASocket): void {
+export function setupRecentMessages(
+  sock: WASocket,
+  /** Chats whose messages must not be kept (messages/no-store.ts) */
+  skipChat?: (chatJid: string) => boolean,
+): void {
   sock.ev.on('messages.upsert', ({ messages, type }) => {
     if (type !== 'notify' && type !== 'append') return;
-    for (const msg of messages) rememberMessage(sock, msg);
+    for (const msg of messages) {
+      const jid = msg.key?.remoteJid;
+      if (jid && skipChat?.(jid)) continue;
+      rememberMessage(sock, msg);
+    }
   });
 }
 

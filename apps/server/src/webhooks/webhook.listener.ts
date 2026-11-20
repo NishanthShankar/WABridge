@@ -18,6 +18,7 @@ import { isPrivateDb, peekPrivateDb } from '../db/private.js';
 import { handleEventResponse } from '../events/events.js';
 import { getEvent } from '../events/events.js';
 import { setupListListener } from '../lists/lists.js';
+import { isNoStoreChat } from '../messages/no-store.js';
 import { setupRecentMessages } from '../messages/recent-messages.js';
 import { safeFetch } from '../net/safe-fetch.js';
 import { claimVote } from '../polls/poll-accounts.js';
@@ -32,6 +33,7 @@ import { setupPrivateDelivery } from '../scheduler/private-callbacks.js';
 import { setAccountPhone } from './account.js';
 import { recordInbound } from './chat-activity.js';
 import { type GroupCache, createGroupCache } from './group-cache.js';
+import { type IncomingClaim, claimIncoming } from './incoming.js';
 import { isGroupJid, jidToPhone, ownJids } from './jid.js';
 import { createWebhooksService } from './webhooks.service.js';
 
@@ -80,7 +82,8 @@ export function setupWebhookListener(
   // Chat lists (labels) as they sync
   setupListListener(sock, db, logger);
   // Recent messages in memory, for POST /api/messages/forward and the edit/delete time checks
-  setupRecentMessages(sock);
+  // Not for chats the server keeps nothing of (messages/no-store.ts): not even in memory
+  setupRecentMessages(sock, (jid) => isNoStoreChat(db, jid));
   // Delivery receipts of messages sent by private requests: message.status webhooks
   setupPrivateDelivery(sock, db, logger);
 
@@ -189,7 +192,31 @@ async function handleMessage(
   const altJid = isGroup ? key.participantAlt : key.remoteJidAlt;
   const senderPhone = await resolvePhone(authorJid, sock, logger, altJid);
 
-  if (!msg.message) return;
+  const chat = {
+    sock,
+    db,
+    logger,
+    chatJid: remoteJid,
+    altJid: (isGroup ? null : altJid) ?? null,
+    isGroup,
+  };
+  const stub = { key, chatJid: remoteJid, isGroup, senderPhone, senderLid };
+
+  if (!msg.message) {
+    // Something WhatsApp delivered that could not be decrypted. The server has nothing to
+    // deliver; an extension that has claimed the chat is told (webhooks/incoming.ts).
+    if (msg.messageStubType === proto.WebMessageInfo.StubType.CIPHERTEXT) {
+      try {
+        await (await claimIncoming(chat))?.unreadable?.(stub);
+      } catch (err) {
+        logger.error(
+          { err: (err as Error).name },
+          'Incoming: unreadable message could not be reported',
+        );
+      }
+    }
+    return;
+  }
 
   const content = normalizeMessageContent(msg.message);
   if (!content) return;
@@ -211,16 +238,44 @@ async function handleMessage(
     !isGroup && senderPhone ? `${senderPhone}@s.whatsapp.net` : null,
   );
 
-  const group = isGroup ? await groupCache.get(remoteJid) : null;
-  const base = {
-    timestamp: new Date().toISOString(),
-    from: senderPhone,
-    fromLid: senderLid,
-    pushName: msg.pushName ?? null,
-    chatId: remoteJid,
-    isGroup,
-    group: isGroup ? { id: remoteJid, name: group?.subject ?? null } : null,
-  };
+  // An extension may claim this chat's messages (webhooks/incoming.ts): then it handles
+  // them and the server delivers nothing of them. Asked before anything looks at the
+  // message. If the extension cannot tell, nothing is delivered.
+  let claim: IncomingClaim | null;
+  try {
+    claim = await claimIncoming(chat);
+  } catch (err) {
+    // Only what kind of error: an error's text could quote what it choked on
+    logger.error(
+      { err: (err as Error).name },
+      'Incoming: an extension could not decide on this chat: message not delivered',
+    );
+    return;
+  }
+
+  const anonymous = !!claim?.anonymous;
+  const group = isGroup && !anonymous ? await groupCache.get(remoteJid) : null;
+  // What every webhook about this message starts with. An anonymous claim leaves only who,
+  // where and when: no profile name, no group name.
+  const base = anonymous
+    ? {
+        timestamp: new Date().toISOString(),
+        from: senderPhone,
+        fromLid: senderLid,
+        chatId: remoteJid,
+        isGroup,
+        ...(claim?.fields ?? {}),
+      }
+    : {
+        timestamp: new Date().toISOString(),
+        from: senderPhone,
+        fromLid: senderLid,
+        pushName: msg.pushName ?? null,
+        chatId: remoteJid,
+        isGroup,
+        group: isGroup ? { id: remoteJid, name: group?.subject ?? null } : null,
+        ...(claim?.fields ?? {}),
+      };
 
   // ── Poll votes: decrypt, record, respond, then tell the same webhooks as messages ──
   if (content.pollUpdateMessage) {
@@ -312,6 +367,37 @@ async function handleMessage(
         },
         logger,
       );
+    return;
+  }
+
+  // ── Claimed by an extension: messages, edits and deletes are its to handle. Reactions
+  //    stay with the server (below), and poll votes and event answers were handled above.
+  //    From here on the server delivers nothing of this message, whatever goes wrong. ──
+  if (claim && !content.reactionMessage) {
+    try {
+      await claim.take({
+        ...stub,
+        msg,
+        content,
+        contentType,
+        isEdit,
+        isRevoke,
+        applyReplyActions: (actions) =>
+          applyReplyActions(
+            sock,
+            msg,
+            remoteJid,
+            actions as ReplyActions,
+            logger,
+          ),
+      });
+    } catch (err) {
+      // Only what kind of error: an error's text could quote what it choked on
+      logger.error(
+        { err: (err as Error).name },
+        'Incoming: the extension that claimed this message could not handle it',
+      );
+    }
     return;
   }
 
@@ -421,7 +507,9 @@ function isViewOnce(raw: proto.IMessage, content: proto.IMessage): boolean {
   );
 }
 
-function extractText(content: proto.IMessage | undefined): string | null {
+export function extractText(
+  content: proto.IMessage | undefined,
+): string | null {
   if (!content) return null;
   return (
     content.conversation ??
@@ -433,7 +521,7 @@ function extractText(content: proto.IMessage | undefined): string | null {
   );
 }
 
-function getContextInfo(
+export function getContextInfo(
   content: proto.IMessage,
   contentType: keyof proto.IMessage | undefined,
 ): proto.IContextInfo | null {
@@ -483,7 +571,7 @@ async function downloadMedia(content: proto.IMessage, logger: Logger) {
  * Extract location details from a locationMessage or liveLocationMessage.
  * Returns null if the message doesn't carry a location.
  */
-function extractLocation(
+export function extractLocation(
   message: proto.IMessage,
 ): Record<string, unknown> | null {
   const loc = message.locationMessage;
@@ -526,7 +614,7 @@ function extractLocation(
   return null;
 }
 
-function stripDevice(jid: string): string {
+export function stripDevice(jid: string): string {
   const [user, server] = jid.split('@');
   return `${user.split(':')[0]}@${server}`;
 }

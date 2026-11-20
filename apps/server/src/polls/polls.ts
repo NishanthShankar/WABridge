@@ -5,6 +5,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { createDatabase } from '../db/client.js';
 import { diskDbOf, isPrivateDb, peekPrivateDb } from '../db/private.js';
+import { noStoreRuleFor } from '../messages/no-store.js';
 import { pollVotes, polls } from '../db/schema.js';
 import { isGroupJid, jidToPhone, ownJids } from '../webhooks/jid.js';
 import { siblingsOf } from './poll-accounts.js';
@@ -71,6 +72,14 @@ export async function sendPoll(
   jid: string,
   input: PollInput,
 ): Promise<string | null> {
+  // A poll's question is content too: for a chat the server keeps nothing of
+  // (messages/no-store.ts) it is only ever kept in memory
+  const noStore = isPrivateDb(db) ? null : noStoreRuleFor(db, [jid]);
+  if (noStore)
+    throw new Error(
+      noStore.messages?.poll ??
+        'Nothing sent into this chat is stored: a poll for it must be sent as a private request',
+    );
   const secret = randomBytes(32);
   const sent = await sock.sendMessage(jid, {
     poll: {

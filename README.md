@@ -255,6 +255,13 @@ The package's default export is an `ExtensionFactory` (see `apps/server/src/exte
 - `routes`: Hono routers mounted under `/api/<basePath>`, behind the normal API key auth. Use `getContext(c)` from `@openwa/server/context` to reach the account's database and socket.
 - `onConnected(sock, ctx)`: called after every WhatsApp connection of every account, with that account's `db`, `config`, `logger` and the extension's `options`.
 - `docs`: markdown (or a function returning it) describing the extension's routes and webhooks. It is appended to `GET /api/docs`, which serves the whole API reference behind the API key.
+- `routes[].first`: mount a router before the server's own routes. Needed when its paths sit under a prefix the server also serves, like `/api/chats/:id/<something>`.
+- `features`: names added to `features` in `GET /api/health`.
+- `incoming(chat)`: asked for every incoming message before the server handles it. Return a claim to take that chat's messages, edits and deletes yourself; the server then delivers nothing of them. If the hook throws, the message is not delivered at all. See `apps/server/src/webhooks/incoming.ts`.
+- `noStore`: a rule naming chats the server must keep nothing of. What is sent into such a chat is always handled as a private request, the queue refuses to store it, and its messages are not remembered in memory. See `apps/server/src/messages/no-store.ts`.
+- `groupCreate`: a field of the extension's own on `POST /api/groups`, with a callback the instant the group exists. See `apps/server/src/groups/create-hooks.ts`.
+- `groupCap`: more group creations a day for groups the extension vouches for. See `apps/server/src/groups/cap-rules.ts`.
+- `privatePollFields`: fields added to what the client is told when a poll was sent by a private request. See `apps/server/src/polls/private-poll.ts`.
 
 A listed package that fails to load is logged and skipped. Extensions keep their own tables (e.g. `CREATE TABLE IF NOT EXISTS` on first use) rather than adding server migrations.
 

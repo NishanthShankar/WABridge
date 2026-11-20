@@ -128,6 +128,12 @@ export function createApp(
     app.route(basePath, router);
   }
 
+  // Extension routes that asked to come first: paths under a prefix the server also serves
+  // (/api/chats/:id/<something of the extension's>) must be matched before the server's own
+  for (const ext of extensions) {
+    for (const { basePath, router, first } of ext.routes ?? []) if (first) app.route(`/api/${basePath}`, router);
+  }
+
   // Health API
   app.route('/api', createHealthRouter());
 
@@ -181,7 +187,7 @@ export function createApp(
 
   // Extension routes (behind the same API key auth as the rest of /api)
   for (const ext of extensions) {
-    for (const { basePath, router } of ext.routes ?? []) app.route(`/api/${basePath}`, router);
+    for (const { basePath, router, first } of ext.routes ?? []) if (!first) app.route(`/api/${basePath}`, router);
   }
 
   // Test send endpoint (development only)

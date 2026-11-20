@@ -66,6 +66,53 @@ describe('group admin', () => {
     await expect(createGroup(db, fakeSock(), 1, { name: 'Two', participants: ['919900000001'] })).rejects.toBeInstanceOf(GroupCapError);
   });
 
+  it('allows more groups a day for groups that qualify for a higher cap', async () => {
+    const db = freshDb();
+    const VOUCHED = ['919900000001@s.whatsapp.net', '919900000003@s.whatsapp.net'];
+    const OTHER = '919900000009';
+    const caps = {
+      cap: 2,
+      higher: {
+        kind: 'vouched',
+        cap: 4,
+        qualifies: (jids: string[]) => jids.every((j) => VOUCHED.includes(j)),
+        hint: 'Vouched groups can still be created',
+      },
+    };
+    const make = (participants: string[]) => createGroup(db, fakeSock(), caps, { name: 'G', participants });
+
+    // Two groups that do not qualify: the plain cap
+    expect((await make([VOUCHED[0], OTHER])).cap).toEqual({ kind: 'default', createdToday: 1, dailyCap: 2 });
+    await make([OTHER]);
+    await expect(make([VOUCHED[0], OTHER])).rejects.toThrow('2/2). Vouched groups can still be created (2/4 today).');
+
+    // Groups that qualify still go through, up to the higher total
+    expect((await make(VOUCHED)).cap).toEqual({ kind: 'vouched', createdToday: 3, dailyCap: 4 });
+    await make([VOUCHED[1]]);
+    await expect(make(VOUCHED)).rejects.toThrow('4/4');
+  });
+
+  it('keeps the plain cap when the rule cannot tell, or is not above it', async () => {
+    const failing = {
+      cap: 1,
+      higher: {
+        kind: 'vouched',
+        cap: 25,
+        qualifies: () => {
+          throw new Error('cannot tell');
+        },
+      },
+    };
+    const db = freshDb();
+    await createGroup(db, fakeSock(), failing, { name: 'One', participants: ['919900000001'] });
+    await expect(createGroup(db, fakeSock(), failing, { name: 'Two', participants: ['919900000001'] })).rejects.toThrow('1/1');
+
+    const lower = { cap: 1, higher: { kind: 'vouched', cap: 0, qualifies: () => true } };
+    const db2 = freshDb();
+    await createGroup(db2, fakeSock(), lower, { name: 'One', participants: ['919900000001'] });
+    await expect(createGroup(db2, fakeSock(), lower, { name: 'Two', participants: ['919900000001'] })).rejects.toThrow('1/1');
+  });
+
   it('adds members and returns the invite link for blocked ones', async () => {
     const r = await updateParticipants(fakeSock(), '120363000000000001@g.us', { add: ['919900000001', '919900000002'] });
     expect(r.participants.map((p) => p.status)).toEqual(['added', 'invite_needed']);

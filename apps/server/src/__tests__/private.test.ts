@@ -31,6 +31,10 @@ import {
   webhooks,
 } from '../db/schema.js';
 import { setPollSiblings } from '../polls/poll-accounts.js';
+import {
+  clearPrivatePollFields,
+  registerPrivatePollFields,
+} from '../polls/private-poll.js';
 import { locatePoll } from '../polls/polls.js';
 import { createPollsRouter } from '../polls/polls.router.js';
 import { createRateLimiter } from '../rate-limit/rate-limiter.js';
@@ -417,6 +421,55 @@ describe('bridge.started', () => {
     expect(Date.parse(hooks[0].startedAt as string)).toBeLessThanOrEqual(
       Date.now(),
     );
+  });
+});
+
+describe('a private poll: what extensions add to its report', () => {
+  afterEach(() => clearPrivatePollFields());
+
+  it('is in the response of POST /api/reply and in the message.status of a queued poll', async () => {
+    registerPrivatePollFields((poll) => ({ pollNote: `kept:${poll.ref}` }));
+    registerPrivatePollFields(() => {
+      throw new Error('one failing extension changes nothing');
+    });
+    const t = setup();
+    recordInbound(t.db, CHAT, null);
+    const priv = { 'X-Private': 'true' };
+    const poll = { name: SECRET_TEXT, options: ['Yes', 'No'], ref: 'q1' };
+
+    const direct = await t.call(
+      'POST',
+      '/api/reply',
+      { chatId: CHAT, poll },
+      priv,
+    );
+    expect(direct.body.pollNote).toBe('kept:q1');
+    // Not for a poll that is stored anyway
+    const stored = await t.call('POST', '/api/reply', { chatId: CHAT, poll });
+    expect(stored.body).not.toHaveProperty('pollNote');
+
+    // A chat that last wrote two days ago: with forcePoll the poll is queued, and reported
+    // by webhook
+    const QUIET_CHAT = '919811111111@s.whatsapp.net';
+    recordInbound(
+      t.db,
+      QUIET_CHAT,
+      null,
+      new Date(Date.now() - 2 * 86_400_000),
+    );
+    const queued = await t.call(
+      'POST',
+      '/api/reply',
+      { chatId: QUIET_CHAT, poll: { ...poll, ref: 'q2' }, forcePoll: true },
+      priv,
+    );
+    expect(queued.status).toBeLessThan(300);
+    expect(t.jobs).toHaveLength(1);
+    await t.runJob(t.jobs[0]);
+    await tick();
+    expect(
+      hooks.find((h) => h.event === 'message.status' && h.status === 'sent'),
+    ).toMatchObject({ pollNote: 'kept:q2' });
   });
 });
 

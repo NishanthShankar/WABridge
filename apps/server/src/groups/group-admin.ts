@@ -4,7 +4,7 @@ import type { ParticipantAction } from '@whiskeysockets/baileys';
 import { groups, sessionMeta } from '../db/schema.js';
 import type { createDatabase } from '../db/client.js';
 import { safeFetch } from '../net/safe-fetch.js';
-import { jidToPhone, toJid } from '../webhooks/jid.js';
+import { jidToPhone, ownJids, toJid } from '../webhooks/jid.js';
 import type { GroupSettingsInput } from './groups.schema.js';
 
 type Database = ReturnType<typeof createDatabase>;
@@ -15,11 +15,29 @@ function istDay(now = Date.now()): string {
   return new Date(now + 5.5 * 3_600_000).toISOString().slice(0, 10);
 }
 
-/** How many groups this account created today, and bump it. Kept in session_meta. */
-function createdToday(db: Database): { key: string; count: number } {
-  const key = `groups_created:${istDay()}`;
+/**
+ * How many groups this account created today. Kept in session_meta. kind 'all' is every
+ * group; 'open' is the ones that did not qualify for a higher cap (groups/cap-rules.ts).
+ */
+function createdToday(db: Database, kind: 'all' | 'open' = 'all'): { key: string; count: number } {
+  const key = `${kind === 'all' ? 'groups_created' : 'groups_created_open'}:${istDay()}`;
   const row = db.select().from(sessionMeta).where(eq(sessionMeta.key, key)).get();
   return { key, count: row ? Number(row.value) || 0 : 0 };
+}
+
+/**
+ * The daily caps on creating groups.
+ * cap: groups in general. higher: the day's total, reachable only with groups that an
+ * extension's rule says qualify (groups/cap-rules.ts).
+ */
+export interface GroupCaps {
+  cap: number;
+  higher?: {
+    kind: string;
+    cap: number;
+    qualifies(memberJids: string[]): boolean | Promise<boolean>;
+    hint?: string;
+  };
 }
 
 function bumpCreated(db: Database, key: string, count: number) {
@@ -65,7 +83,7 @@ export class GroupCapError extends Error {
 export async function createGroup(
   db: Database,
   sock: WASocket,
-  cap: number,
+  caps: number | GroupCaps,
   input: {
     name: string;
     participants: string[];
@@ -73,16 +91,44 @@ export async function createGroup(
     settings?: GroupSettingsInput;
     pictureUrl?: string;
   },
+  /** Called with the new group's id the moment WhatsApp has created it, before anything else */
+  onCreated?: (groupJid: string) => void,
 ) {
-  const { key, count } = createdToday(db);
-  if (count >= cap) throw new GroupCapError(`Daily group creation cap reached (${count}/${cap})`);
+  const cap = typeof caps === 'number' ? caps : caps.cap;
+  // Never lower than the plain cap
+  const higher = typeof caps === 'number' ? undefined : caps.higher;
+  const higherCap = Math.max(cap, higher?.cap ?? cap);
 
   const wanted = input.participants.map((p) => ({ input: p, jid: toJid(p) }));
   const valid = [...new Set(wanted.filter((w) => w.jid && !w.jid.endsWith('@g.us')).map((w) => w.jid!))];
   if (valid.length === 0) throw Object.assign(new Error('No valid participants'), { statusCode: 400 });
 
+  // Two counts: every group created today, and the ones that did not qualify for the higher
+  // cap. The second stops at cap; the first at higherCap.
+  const total = createdToday(db, 'all');
+  const open = createdToday(db, 'open');
+  if (total.count >= higherCap)
+    throw new GroupCapError(`Daily group creation cap reached (${total.count}/${higherCap})`);
+  // Only worth asking when it can change the answer
+  let qualifies = false;
+  if (higher && higherCap > cap) {
+    try {
+      qualifies = await higher.qualifies(valid);
+    } catch {
+      // A rule that cannot tell vouches for nothing
+    }
+  }
+  if (!qualifies && open.count >= cap)
+    throw new GroupCapError(
+      higher && higherCap > cap
+        ? `Daily group creation cap reached (${open.count}/${cap}).${higher.hint ? ` ${higher.hint}` : ''} (${total.count}/${higherCap} today).`
+        : `Daily group creation cap reached (${open.count}/${cap})`,
+    );
+
   const meta = await sock.groupCreate(input.name, valid);
-  bumpCreated(db, key, count + 1);
+  onCreated?.(meta.id);
+  bumpCreated(db, total.key, total.count + 1);
+  if (!qualifies) bumpCreated(db, open.key, open.count + 1);
 
   if (input.description) {
     await sock.groupUpdateDescription(meta.id, input.description).catch(() => {});
@@ -131,6 +177,10 @@ export async function createGroup(
     id: meta.id,
     name: meta.subject ?? input.name,
     participants,
+    /** Which daily cap this group counted against, and where the day stands */
+    cap: qualifies && higher
+      ? { kind: higher.kind, createdToday: total.count + 1, dailyCap: higherCap }
+      : { kind: 'default', createdToday: open.count + 1, dailyCap: cap },
     inviteLink: await inviteLink(sock, meta.id),
     ...(settings ? { settings } : {}),
     ...(picture ? { picture } : {}),
